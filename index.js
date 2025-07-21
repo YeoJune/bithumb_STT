@@ -153,12 +153,12 @@ const config = {
   buyAmount: 10000, // 1만원씩 매수
   profitRatio: 0.03, // 3% 익절
   lossRatio: 0.015, // 1.5% 손절
-  trailingStopRatio: 0.01, // 고점 대비 1% 하락 시 매도
+  trailingStopRatio: 0.005, // 고점 대비 0.5% 하락 시 매도
   timeframes: {
     short: 5, // 단기 평균 5분
     long: 60, // 장기 평균 60분
     shortThreshold: 1.2, // 현재 vs 단기 1.2배
-    longThreshold: 1.4, // 단기 vs 장기 1.4배
+    longThreshold: 1.2, // 단기 vs 장기 1.2배
   },
 };
 
