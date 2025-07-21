@@ -152,7 +152,7 @@ class BithumbTradingBot {
 
 // 설정
 const config = {
-  refreshInterval: 20, // 20초마다 데이터 갱신
+  refreshInterval: 30, // 30초마다 데이터 갱신
   buyAmount: 10000, // 1만원씩 매수
   profitRatio: 0.03, // 3% 익절
   lossRatio: 0.015, // 1.5% 손절
@@ -160,8 +160,8 @@ const config = {
   timeframes: {
     short: 5, // 단기 평균 5분
     long: 60, // 장기 평균 60분
-    shortThreshold: 1.2, // 현재 vs 단기 1.2배
-    longThreshold: 1.2, // 단기 vs 장기 1.2배
+    shortThreshold: 1.4, // 현재 vs 단기 1.4배
+    longThreshold: 1.8, // 단기 vs 장기 1.8배
   },
 };
 

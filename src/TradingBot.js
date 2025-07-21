@@ -712,7 +712,7 @@ class TradingBot {
         this.stats.currentScan = "Scanning markets...";
         const markets = await this.dataProvider.getMarketsByVolume();
 
-        for (const market of markets.slice(0, 15)) {
+        for (const market of markets.slice(0, 100)) {
           if (this.holdings[market]) continue;
 
           if (await this.checkBuySignal(market)) {
