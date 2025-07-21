@@ -152,7 +152,7 @@ class BithumbTradingBot {
 
 // 설정
 const config = {
-  refreshInterval: 10, // 10초마다 데이터 갱신
+  refreshInterval: 20, // 20초마다 데이터 갱신
   buyAmount: 10000, // 1만원씩 매수
   profitRatio: 0.03, // 3% 익절
   lossRatio: 0.015, // 1.5% 손절
