@@ -8,6 +8,7 @@ class TradingBot {
     this.buyAmount = config.buyAmount || 10000;
     this.profitRatio = config.profitRatio || 0.05;
     this.lossRatio = config.lossRatio || 0.025;
+    this.trailingStopRatio = config.trailingStopRatio || 0.01; // 고점 대비 1% 하락 시 매도
     this.buyFeeRate = 0.0004; // 매수 수수료 0.04%
     this.sellFeeRate = 0.0004; // 매도 수수료 0.04%
     this.timeframes = config.timeframes || {
@@ -199,8 +200,8 @@ class TradingBot {
     }
   }
 
-  // 익절 주문 등록
-  async registerProfitOrder(market, holding) {
+  // 트레일링 스탑 모니터링 시작
+  async startTrailingStop(market, holding) {
     try {
       const holdingInfo = await this.executionEngine.getHolding(market);
       if (holdingInfo.totalQty <= 0) {
@@ -213,45 +214,18 @@ class TradingBot {
         return false;
       }
 
-      // 이미 매도 주문이 있는지 확인
-      if (holdingInfo.locked > 0) {
-        this.logger.log(
-          `⚠️ ${market} 이미 매도 주문 중: ${holdingInfo.locked}개`
-        );
-        // 기존 매도 주문이 있다면 상태만 업데이트
-        this.holdings[market] = {
-          ...holding,
-          state: "profit_waiting",
-          balance: holdingInfo.balance,
-          locked: holdingInfo.locked,
-          totalQty: holdingInfo.totalQty,
-        };
-        await this.dataManager.saveData({
-          holdings: this.holdings,
-          stats: this.stats,
-        });
-        return true;
-      }
-
-      const profitTarget = holding.price * (1 + this.profitRatio);
-      const orderbook = await this.dataProvider.getOrderbook(market);
-      const optimalPrice = this.getOptimalSellPrice(orderbook, profitTarget);
-
-      // 가용 수량(balance)으로만 매도 주문
-      const profitOrder = await this.executionEngine.placeSellOrder(
-        market,
-        holdingInfo.balance,
-        optimalPrice
-      );
+      // 현재 가격을 고점으로 초기화
+      const ticker = await this.dataProvider.getTicker(market);
+      const currentPrice = parseFloat(ticker.trade_price);
 
       this.holdings[market] = {
         ...holding,
-        state: "profit_waiting",
-        balance: 0, // 주문 등록 후 balance는 0
-        locked: holdingInfo.balance, // 주문한 수량이 locked됨
+        state: "trailing_stop",
+        balance: holdingInfo.balance,
+        locked: holdingInfo.locked,
         totalQty: holdingInfo.totalQty,
-        profitOrderUuid: profitOrder.uuid,
-        profitTarget: optimalPrice,
+        highestPrice: currentPrice, // 고점 추적
+        trailingStopPrice: currentPrice * (1 - this.trailingStopRatio), // 트레일링 스탑 가격
       };
 
       await this.dataManager.saveData({
@@ -260,13 +234,69 @@ class TradingBot {
       });
 
       this.logger.log(
-        `📈 ${market} 익절주문 등록: ${
-          holdingInfo.balance
-        }개 @ ${optimalPrice.toLocaleString()}원`
+        `📈 ${market} 트레일링 스탑 시작: 고점 ${currentPrice.toLocaleString()}원, 스탑 ${this.holdings[
+          market
+        ].trailingStopPrice.toLocaleString()}원`
       );
       return true;
     } catch (error) {
-      this.logger.log(`⚠️ ${market} 익절주문 실패: ${error.message}`);
+      this.logger.log(`⚠️ ${market} 트레일링 스탑 시작 실패: ${error.message}`);
+      return false;
+    }
+  }
+
+  // 트레일링 스탑 매도 실행
+  async executeTrailingStop(market, holding) {
+    try {
+      // 실제 보유 수량 확인 후 시장가 매도
+      const holdingInfo = await this.executionEngine.getHolding(market);
+      const sellableQty = holdingInfo.balance + holdingInfo.locked;
+
+      if (sellableQty <= 0) {
+        this.logger.log(`⚠️ ${market} 트레일링 스탑 시 보유량 없음`);
+        delete this.holdings[market];
+        await this.dataManager.saveData({
+          holdings: this.holdings,
+          stats: this.stats,
+        });
+        return false;
+      }
+
+      const sellOrder = await this.executionEngine.placeMarketSellOrder(
+        market,
+        sellableQty
+      );
+
+      const ticker = await this.dataProvider.getTicker(market);
+      const currentPrice = parseFloat(ticker.trade_price);
+      const profit = ((currentPrice - holding.price) / holding.price) * 100;
+
+      this.stats.trades++;
+      const netProfit = this.calculateNetProfit(
+        holding.price,
+        currentPrice,
+        sellableQty
+      );
+      this.stats.totalProfit += netProfit;
+      if (profit > 0) this.stats.wins++;
+      else this.stats.losses++;
+
+      delete this.holdings[market];
+      await this.dataManager.saveData({
+        holdings: this.holdings,
+        stats: this.stats,
+      });
+
+      this.logger.log(
+        `🎯 ${market} 트레일링 스탑 매도: ${
+          profit > 0 ? "+" : ""
+        }${profit.toFixed(2)}% (고점 대비 ${
+          this.trailingStopRatio * 100
+        }% 하락)`
+      );
+      return true;
+    } catch (error) {
+      this.logger.log(`❌ ${market} 트레일링 스탑 매도 실패: ${error.message}`);
       return false;
     }
   }
@@ -274,44 +304,6 @@ class TradingBot {
   // 손절 매도
   async stopLoss(market, holding) {
     try {
-      // 익절 주문 확실히 취소
-      if (holding.profitOrderUuid) {
-        const cancelResult = await this.executionEngine.cancelOrder(
-          holding.profitOrderUuid
-        );
-        if (!cancelResult.success) {
-          // 취소 실패 시 주문 상태 확인
-          const orderStatus = await this.executionEngine.getOrderStatus(
-            holding.profitOrderUuid
-          );
-          if (orderStatus === "done") {
-            // 익절 주문이 이미 체결됨
-            const profit =
-              ((holding.profitTarget - holding.price) / holding.price) * 100;
-            this.stats.trades++;
-            this.stats.wins++;
-            const netProfit = this.calculateNetProfit(
-              holding.price,
-              holding.profitTarget,
-              holding.totalQty || holding.qty
-            );
-            this.stats.totalProfit += netProfit;
-
-            delete this.holdings[market];
-            await this.dataManager.saveData({
-              holdings: this.holdings,
-              stats: this.stats,
-            });
-
-            this.logger.log(`🎉 ${market} 익절 체결: +${profit.toFixed(2)}%`);
-            return true;
-          } else if (orderStatus !== "cancel") {
-            this.logger.log(`❌ ${market} 익절주문 취소 불가, 손절 중단`);
-            return false;
-          }
-        }
-      }
-
       // 실제 보유 수량 확인 후 시장가 매도
       const holdingInfo = await this.executionEngine.getHolding(market);
       const sellableQty = holdingInfo.balance + holdingInfo.locked;
@@ -390,20 +382,21 @@ class TradingBot {
               price: avgPrice,
             };
 
-            // 3초 후 익절 주문 등록
+            // 3초 후 트레일링 스탑 시작
             await new Promise((r) => setTimeout(r, 3000));
 
-            await this.registerProfitOrder(market, this.holdings[market]);
+            await this.startTrailingStop(market, this.holdings[market]);
           }
         } else if (holding.state === "bought") {
-          // bought 상태 → 익절 주문 등록
-          await this.registerProfitOrder(market, this.holdings[market]);
-        } else if (holding.state === "profit_waiting") {
-          // 손절 조건 확인
+          // bought 상태 → 트레일링 스탑 시작
+          await this.startTrailingStop(market, this.holdings[market]);
+        } else if (holding.state === "trailing_stop") {
+          // 트레일링 스탑 로직
           const ticker = await this.dataProvider.getTicker(market);
           const currentPrice = parseFloat(ticker.trade_price);
           const lossTarget = holding.price * (1 - this.lossRatio);
 
+          // 기존 손절 조건 확인 (우선순위)
           if (currentPrice <= lossTarget) {
             this.logger.log(
               `🚨 ${market} 손절 조건: ${currentPrice.toLocaleString()}원 <= ${lossTarget.toLocaleString()}원`
@@ -412,32 +405,35 @@ class TradingBot {
             continue;
           }
 
-          // 익절 주문 확인
-          if (holding.profitOrderUuid) {
-            const orderStatus = await this.executionEngine.getOrderStatus(
-              holding.profitOrderUuid
+          // 트레일링 스탑 로직
+          let updated = false;
+
+          // 고점 갱신 체크
+          if (currentPrice > holding.highestPrice) {
+            const newStopPrice = currentPrice * (1 - this.trailingStopRatio);
+            this.holdings[market].highestPrice = currentPrice;
+            this.holdings[market].trailingStopPrice = newStopPrice;
+            updated = true;
+            this.logger.log(
+              `📈 ${market} 고점 갱신: ${currentPrice.toLocaleString()}원 → 스탑 ${newStopPrice.toLocaleString()}원`
             );
-            if (orderStatus === "done") {
-              const profit =
-                ((holding.profitTarget - holding.price) / holding.price) * 100;
+          }
 
-              this.stats.trades++;
-              this.stats.wins++;
-              const netProfit = this.calculateNetProfit(
-                holding.price,
-                holding.profitTarget,
-                holding.totalQty || holding.qty
-              );
-              this.stats.totalProfit += netProfit;
+          // 트레일링 스탑 조건 확인
+          if (currentPrice <= holding.trailingStopPrice) {
+            this.logger.log(
+              `🎯 ${market} 트레일링 스탑 발동: ${currentPrice.toLocaleString()}원 <= ${holding.trailingStopPrice.toLocaleString()}원`
+            );
+            await this.executeTrailingStop(market, holding);
+            continue;
+          }
 
-              delete this.holdings[market];
-              await this.dataManager.saveData({
-                holdings: this.holdings,
-                stats: this.stats,
-              });
-
-              this.logger.log(`🎉 ${market} 익절 체결: +${profit.toFixed(2)}%`);
-            }
+          // 상태 업데이트가 있었다면 저장
+          if (updated) {
+            await this.dataManager.saveData({
+              holdings: this.holdings,
+              stats: this.stats,
+            });
           }
         }
       } catch (error) {
@@ -480,8 +476,80 @@ class TradingBot {
         );
         const botData = this.holdings[market];
 
-        // 상태 결정 및 동기화 로직 (기존과 동일)
-        // ... (복잡한 동기화 로직은 기존 코드 유지)
+        // 상태 결정 및 동기화
+        if (buyOrders.length > 0) {
+          // 매수 주문 있음
+          this.holdings[market] = {
+            state: "buying",
+            price: parseFloat(buyOrders[0].price),
+            qty: parseFloat(buyOrders[0].volume),
+            buyTime: botData?.buyTime || Date.now(),
+            uuid: buyOrders[0].uuid,
+          };
+          syncCount++;
+          this.logger.log(`🔄 ${market} 매수 주문 동기화`);
+        } else if (actualData && actualData.totalQty > 0) {
+          // 보유 중인 경우
+          const totalQty = actualData.totalQty;
+          const availableQty = actualData.balance;
+          const lockedQty = actualData.locked;
+
+          // 기존 매도 주문들 모두 취소 (트레일링 스탑 방식이므로)
+          for (const order of sellOrders) {
+            try {
+              await this.executionEngine.cancelOrder(order.uuid);
+              this.logger.log(`🚫 ${market} 기존 매도주문 취소: ${order.uuid}`);
+            } catch (error) {
+              this.logger.log(`⚠️ ${market} 주문 취소 실패: ${error.message}`);
+            }
+          }
+
+          // 잠시 대기
+          await new Promise((r) => setTimeout(r, 500));
+
+          const buyPrice =
+            actualData.avgBuyPrice > 0 ? actualData.avgBuyPrice : 0;
+
+          if (buyPrice > 0) {
+            try {
+              // 현재 가격을 고점으로 초기화하여 트레일링 스탑 시작
+              const ticker = await this.dataProvider.getTicker(market);
+              const currentPrice = parseFloat(ticker.trade_price);
+
+              this.holdings[market] = {
+                state: "trailing_stop",
+                price: buyPrice,
+                balance: availableQty,
+                locked: lockedQty,
+                totalQty: totalQty,
+                buyTime: botData?.buyTime || Date.now(),
+                uuid: botData?.uuid || null,
+                highestPrice: currentPrice, // 현재 가격을 고점으로 설정
+                trailingStopPrice: currentPrice * (1 - this.trailingStopRatio),
+                recovered: true,
+              };
+              syncCount++;
+              this.logger.log(
+                `✨ ${market} 트레일링 스탑 재시작: ${totalQty}개, 고점 ${currentPrice.toLocaleString()}원, 스탑 ${(
+                  currentPrice *
+                  (1 - this.trailingStopRatio)
+                ).toLocaleString()}원`
+              );
+            } catch (error) {
+              this.logger.log(
+                `⚠️ ${market} 트레일링 스탑 재시작 실패: ${error.message}`
+              );
+            }
+          } else {
+            this.logger.log(`⚠️ ${market} 매수가 정보 없음, 스킵`);
+          }
+        } else {
+          // 보유량 없고 주문도 없으면 봇 데이터에서 제거
+          if (botData) {
+            delete this.holdings[market];
+            this.logger.log(`🗑️ ${market} 보유량 없음, 봇 데이터 정리`);
+          }
+        }
       }
 
       await this.dataManager.saveData({
