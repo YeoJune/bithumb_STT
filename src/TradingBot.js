@@ -452,8 +452,8 @@ class TradingBot {
               price: avgPrice,
             };
 
-            // 3초 후 트레일링 스탑 시작
-            await new Promise((r) => setTimeout(r, 3000));
+            // 10초 후 트레일링 스탑 시작
+            await new Promise((r) => setTimeout(r, 10 * 1000));
 
             await this.startTrailingStop(market, this.holdings[market]);
           }

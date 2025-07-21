@@ -104,14 +104,16 @@ class BithumbTradingBot {
         const success = await this.tradingBot.runTradingCycle();
 
         if (!success) {
-          await new Promise((r) => setTimeout(r, 30000));
+          await new Promise((r) => setTimeout(r, refreshInterval * 1000));
           continue;
         }
 
         // 대기
         this.tradingBot.stats.currentScan = "Waiting...";
-        for (let i = 0; i < 30; i++) {
-          this.tradingBot.stats.currentScan = `Next cycle in ${30 - i}s`;
+        for (let i = 0; i < refreshInterval; i++) {
+          this.tradingBot.stats.currentScan = `Next cycle in ${
+            refreshInterval - i
+          }s`;
           await new Promise((r) => setTimeout(r, 1000));
         }
       }
@@ -150,6 +152,7 @@ class BithumbTradingBot {
 
 // 설정
 const config = {
+  refreshInterval: 10, // 10초마다 데이터 갱신
   buyAmount: 10000, // 1만원씩 매수
   profitRatio: 0.03, // 3% 익절
   lossRatio: 0.015, // 1.5% 손절
