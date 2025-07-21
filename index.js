@@ -104,15 +104,15 @@ class BithumbTradingBot {
         const success = await this.tradingBot.runTradingCycle();
 
         if (!success) {
-          await new Promise((r) => setTimeout(r, refreshInterval * 1000));
+          await new Promise((r) => setTimeout(r, this.refreshInterval * 1000));
           continue;
         }
 
         // 대기
         this.tradingBot.stats.currentScan = "Waiting...";
-        for (let i = 0; i < refreshInterval; i++) {
+        for (let i = 0; i < this.refreshInterval; i++) {
           this.tradingBot.stats.currentScan = `Next cycle in ${
-            refreshInterval - i
+            this.refreshInterval - i
           }s`;
           await new Promise((r) => setTimeout(r, 1000));
         }
