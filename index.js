@@ -157,7 +157,7 @@ const config = {
   timeframes: {
     short: 5, // 단기 평균 5분
     long: 60, // 장기 평균 60분
-    shortThreshold: 1.8, // 현재 vs 단기 1.8배
+    shortThreshold: 1.2, // 현재 vs 단기 1.2배
     longThreshold: 1.4, // 단기 vs 장기 1.4배
   },
 };
