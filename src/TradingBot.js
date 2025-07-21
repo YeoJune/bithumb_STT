@@ -214,9 +214,15 @@ class TradingBot {
         return false;
       }
 
-      // 현재 가격을 고점으로 초기화
+      // 고점 계산: 현재가와 매수가 중 높은 값으로 시작
       const ticker = await this.dataProvider.getTicker(market);
       const currentPrice = parseFloat(ticker.trade_price);
+      const buyPrice = holding.price;
+
+      // 고점은 최소한 매수가 이상이어야 함
+      const initialHighestPrice = Math.max(currentPrice, buyPrice);
+      const trailingStopPrice =
+        initialHighestPrice * (1 - this.trailingStopRatio);
 
       this.holdings[market] = {
         ...holding,
@@ -224,8 +230,8 @@ class TradingBot {
         balance: holdingInfo.balance,
         locked: holdingInfo.locked,
         totalQty: holdingInfo.totalQty,
-        highestPrice: currentPrice, // 고점 추적
-        trailingStopPrice: currentPrice * (1 - this.trailingStopRatio), // 트레일링 스탑 가격
+        highestPrice: initialHighestPrice,
+        trailingStopPrice: trailingStopPrice,
       };
 
       await this.dataManager.saveData({
@@ -233,10 +239,9 @@ class TradingBot {
         stats: this.stats,
       });
 
+      this.logger.log(`📈 ${market} 트레일링 스탑 시작`);
       this.logger.log(
-        `📈 ${market} 트레일링 스탑 시작: 고점 ${currentPrice.toLocaleString()}원, 스탑 ${this.holdings[
-          market
-        ].trailingStopPrice.toLocaleString()}원`
+        `📊 ${market} 매수가: ${buyPrice.toLocaleString()}원, 현재가: ${currentPrice.toLocaleString()}원, 고점: ${initialHighestPrice.toLocaleString()}원, 스탑: ${trailingStopPrice.toLocaleString()}원`
       );
       return true;
     } catch (error) {
@@ -408,15 +413,30 @@ class TradingBot {
           // 트레일링 스탑 로직
           let updated = false;
 
-          // 고점 갱신 체크
+          // 고점 갱신 체크 (현재가가 고점보다 높고, 유의미한 상승인 경우)
           if (currentPrice > holding.highestPrice) {
-            const newStopPrice = currentPrice * (1 - this.trailingStopRatio);
-            this.holdings[market].highestPrice = currentPrice;
-            this.holdings[market].trailingStopPrice = newStopPrice;
-            updated = true;
-            this.logger.log(
-              `📈 ${market} 고점 갱신: ${currentPrice.toLocaleString()}원 → 스탑 ${newStopPrice.toLocaleString()}원`
-            );
+            const priceIncrease =
+              (currentPrice - holding.highestPrice) / holding.highestPrice;
+
+            // 최소 0.1% 이상 상승했을 때만 고점 갱신 (노이즈 방지)
+            if (priceIncrease >= 0.001) {
+              const newStopPrice = currentPrice * (1 - this.trailingStopRatio);
+              const oldHighest = holding.highestPrice;
+              const oldStop = holding.trailingStopPrice;
+
+              this.holdings[market].highestPrice = currentPrice;
+              this.holdings[market].trailingStopPrice = newStopPrice;
+              updated = true;
+
+              this.logger.log(
+                `📈 ${market} 고점 갱신: ${oldHighest.toLocaleString()}원 → ${currentPrice.toLocaleString()}원 (+${(
+                  priceIncrease * 100
+                ).toFixed(2)}%)`
+              );
+              this.logger.log(
+                `🎯 ${market} 스탑 조정: ${oldStop.toLocaleString()}원 → ${newStopPrice.toLocaleString()}원`
+              );
+            }
           }
 
           // 트레일링 스탑 조건 확인
@@ -426,9 +446,7 @@ class TradingBot {
             );
             await this.executeTrailingStop(market, holding);
             continue;
-          }
-
-          // 상태 업데이트가 있었다면 저장
+          } // 상태 업데이트가 있었다면 저장
           if (updated) {
             await this.dataManager.saveData({
               holdings: this.holdings,
@@ -512,9 +530,29 @@ class TradingBot {
 
           if (buyPrice > 0) {
             try {
-              // 현재 가격을 고점으로 초기화하여 트레일링 스탑 시작
+              // 현재 가격과 기존 고점 정보를 종합하여 정확한 고점 계산
               const ticker = await this.dataProvider.getTicker(market);
               const currentPrice = parseFloat(ticker.trade_price);
+
+              // 고점 계산 로직: 기존 고점 > 현재가 > 매수가 순으로 우선순위
+              let highestPrice = currentPrice;
+
+              // 기존 봇 데이터에 고점 정보가 있다면 비교
+              if (
+                botData?.highestPrice &&
+                botData.highestPrice > highestPrice
+              ) {
+                highestPrice = botData.highestPrice;
+              }
+
+              // 매수가보다는 높아야 함 (최소 고점 = 매수가)
+              if (highestPrice < buyPrice) {
+                highestPrice = buyPrice;
+              }
+
+              // 트레일링 스탑 가격 계산
+              const trailingStopPrice =
+                highestPrice * (1 - this.trailingStopRatio);
 
               this.holdings[market] = {
                 state: "trailing_stop",
@@ -524,16 +562,16 @@ class TradingBot {
                 totalQty: totalQty,
                 buyTime: botData?.buyTime || Date.now(),
                 uuid: botData?.uuid || null,
-                highestPrice: currentPrice, // 현재 가격을 고점으로 설정
-                trailingStopPrice: currentPrice * (1 - this.trailingStopRatio),
+                highestPrice: highestPrice,
+                trailingStopPrice: trailingStopPrice,
                 recovered: true,
               };
               syncCount++;
               this.logger.log(
-                `✨ ${market} 트레일링 스탑 재시작: ${totalQty}개, 고점 ${currentPrice.toLocaleString()}원, 스탑 ${(
-                  currentPrice *
-                  (1 - this.trailingStopRatio)
-                ).toLocaleString()}원`
+                `✨ ${market} 트레일링 스탑 재시작: ${totalQty}개`
+              );
+              this.logger.log(
+                `📊 ${market} 매수가: ${buyPrice.toLocaleString()}원, 현재가: ${currentPrice.toLocaleString()}원, 고점: ${highestPrice.toLocaleString()}원, 스탑: ${trailingStopPrice.toLocaleString()}원`
               );
             } catch (error) {
               this.logger.log(

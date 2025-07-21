@@ -84,7 +84,9 @@ class BithumbTradingBot {
       this.logger.log(
         `📊 설정: 익절 ${(this.tradingBot.profitRatio * 100).toFixed(
           1
-        )}%, 손절 ${(this.tradingBot.lossRatio * 100).toFixed(1)}%`
+        )}%, 손절 ${(this.tradingBot.lossRatio * 100).toFixed(1)}%, 트레일링 ${(
+          this.tradingBot.trailingStopRatio * 100
+        ).toFixed(1)}%`
       );
 
       if (Object.keys(this.tradingBot.holdings).length > 0) {
