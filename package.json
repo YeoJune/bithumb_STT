@@ -1,0 +1,21 @@
+{
+  "name": "bithumb_stt",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "axios": "^1.10.0",
+    "crypto": "^1.0.1",
+    "dotenv": "^17.2.0",
+    "fs": "^0.0.1-security",
+    "jsonwebtoken": "^9.0.2",
+    "path": "^0.12.7",
+    "querystring": "^0.2.1",
+    "uuid": "^11.1.0"
+  }
+}
