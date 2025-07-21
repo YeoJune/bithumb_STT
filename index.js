@@ -62,9 +62,15 @@ class BithumbTradingBot {
     this.loadPersistentData();
 
     // 키보드 입력 설정
-    process.stdin.setRawMode(true);
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", this.handleKeypress.bind(this));
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", this.handleKeypress.bind(this));
+    } else {
+      console.log(
+        "⚠️ TTY 모드가 아닙니다. 키보드 단축키를 사용할 수 없습니다."
+      );
+    }
   }
 
   // 지속성 데이터 저장
