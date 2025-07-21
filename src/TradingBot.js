@@ -456,6 +456,34 @@ class TradingBot {
             await new Promise((r) => setTimeout(r, 10 * 1000));
 
             await this.startTrailingStop(market, this.holdings[market]);
+          } else if (orderStatus === "wait") {
+            // 미처리 매수 주문 체크 - 주문 생성 시간으로부터 2분 경과 시 취소
+            const orderAge = Date.now() - holding.buyTime;
+            const maxWaitTime = 2 * 60 * 1000; // 2분
+            
+            if (orderAge > maxWaitTime) {
+              this.logger.log(
+                `⏰ ${market} 매수 주문 2분 경과로 취소: ${holding.uuid}`
+              );
+              
+              try {
+                await this.executionEngine.cancelOrder(holding.uuid);
+                delete this.holdings[market];
+                await this.dataManager.saveData({
+                  holdings: this.holdings,
+                  stats: this.stats,
+                });
+                this.logger.log(`🚫 ${market} 매수 주문 취소 완료`);
+              } catch (cancelError) {
+                this.logger.log(`⚠️ ${market} 매수 주문 취소 실패: ${cancelError.message}`);
+                // 취소 실패 시에도 홀딩에서 제거 (주문이 이미 처리되었을 가능성)
+                delete this.holdings[market];
+                await this.dataManager.saveData({
+                  holdings: this.holdings,
+                  stats: this.stats,
+                });
+              }
+            }
           }
         } else if (holding.state === "bought") {
           // bought 상태 → 트레일링 스탑 시작
