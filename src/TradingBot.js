@@ -153,14 +153,34 @@ class TradingBot {
     if (this.buyAmount < 5000) return false;
 
     try {
-      const [ticker, orderbook] = await Promise.all([
+      const [tickerResponse, orderbook] = await Promise.all([
         this.dataProvider.getTicker(market),
         this.dataProvider.getOrderbook(market),
       ]);
 
+      const ticker = Array.isArray(tickerResponse)
+        ? tickerResponse[0]
+        : tickerResponse;
+
+      if (!ticker || !ticker.trade_price) {
+        this.logger.log(`❌ ${market} 현재가 정보 없음`);
+        return false;
+      }
+
       let buyPrice = parseFloat(ticker.trade_price);
+
+      if (isNaN(buyPrice) || buyPrice <= 0) {
+        this.logger.log(
+          `❌ ${market} 현재가 데이터 오류: ${ticker.trade_price}`
+        );
+        return false;
+      }
+
       if (orderbook?.orderbook_units?.length > 0) {
-        buyPrice = parseFloat(orderbook.orderbook_units[0].ask_price);
+        const askPrice = parseFloat(orderbook.orderbook_units[0].ask_price);
+        if (!isNaN(askPrice) && askPrice > 0) {
+          buyPrice = askPrice;
+        }
       }
 
       const rawQty = this.buyAmount / buyPrice;
@@ -215,8 +235,27 @@ class TradingBot {
       }
 
       // 고점 계산: 현재가와 매수가 중 높은 값으로 시작
-      const ticker = await this.dataProvider.getTicker(market);
+      const tickerResponse = await this.dataProvider.getTicker(market);
+      const ticker = Array.isArray(tickerResponse)
+        ? tickerResponse[0]
+        : tickerResponse;
+
+      if (!ticker || !ticker.trade_price) {
+        this.logger.log(
+          `⚠️ ${market} 트레일링 스탑 시작 실패: 현재가 정보 없음`
+        );
+        return false;
+      }
+
       const currentPrice = parseFloat(ticker.trade_price);
+
+      if (isNaN(currentPrice) || currentPrice <= 0) {
+        this.logger.log(
+          `⚠️ ${market} 트레일링 스탑 시작 실패: 현재가 데이터 오류 ${ticker.trade_price}`
+        );
+        return false;
+      }
+
       const buyPrice = holding.price;
 
       // 고점은 최소한 매수가 이상이어야 함
@@ -272,8 +311,21 @@ class TradingBot {
         sellableQty
       );
 
-      const ticker = await this.dataProvider.getTicker(market);
-      const currentPrice = parseFloat(ticker.trade_price);
+      const tickerResponse = await this.dataProvider.getTicker(market);
+      const ticker = Array.isArray(tickerResponse)
+        ? tickerResponse[0]
+        : tickerResponse;
+      let currentPrice = ticker?.trade_price
+        ? parseFloat(ticker.trade_price)
+        : holding.price;
+
+      if (isNaN(currentPrice)) {
+        this.logger.log(
+          `⚠️ ${market} 트레일링 스탑 매도 후 현재가 조회 실패, 매수가로 대체`
+        );
+        currentPrice = holding.price;
+      }
+
       const profit = ((currentPrice - holding.price) / holding.price) * 100;
 
       this.stats.trades++;
@@ -328,8 +380,21 @@ class TradingBot {
         sellableQty
       );
 
-      const ticker = await this.dataProvider.getTicker(market);
-      const currentPrice = parseFloat(ticker.trade_price);
+      const tickerResponse = await this.dataProvider.getTicker(market);
+      const ticker = Array.isArray(tickerResponse)
+        ? tickerResponse[0]
+        : tickerResponse;
+      let currentPrice = ticker?.trade_price
+        ? parseFloat(ticker.trade_price)
+        : holding.price;
+
+      if (isNaN(currentPrice)) {
+        this.logger.log(
+          `⚠️ ${market} 손절 매도 후 현재가 조회 실패, 매수가로 대체`
+        );
+        currentPrice = holding.price;
+      }
+
       const profit = ((currentPrice - holding.price) / holding.price) * 100;
 
       this.stats.trades++;
@@ -397,8 +462,25 @@ class TradingBot {
           await this.startTrailingStop(market, this.holdings[market]);
         } else if (holding.state === "trailing_stop") {
           // 트레일링 스탑 로직
-          const ticker = await this.dataProvider.getTicker(market);
+          const tickerResponse = await this.dataProvider.getTicker(market);
+          const ticker = Array.isArray(tickerResponse)
+            ? tickerResponse[0]
+            : tickerResponse;
+
+          if (!ticker || !ticker.trade_price) {
+            this.logger.log(`⚠️ ${market} 현재가 정보 없음, 스킵`);
+            continue;
+          }
+
           const currentPrice = parseFloat(ticker.trade_price);
+
+          if (isNaN(currentPrice) || currentPrice <= 0) {
+            this.logger.log(
+              `⚠️ ${market} 현재가 데이터 오류: ${ticker.trade_price}, 스킵`
+            );
+            continue;
+          }
+
           const lossTarget = holding.price * (1 - this.lossRatio);
 
           // 기존 손절 조건 확인 (우선순위)
@@ -531,8 +613,24 @@ class TradingBot {
           if (buyPrice > 0) {
             try {
               // 현재 가격과 기존 고점 정보를 종합하여 정확한 고점 계산
-              const ticker = await this.dataProvider.getTicker(market);
+              const tickerResponse = await this.dataProvider.getTicker(market);
+              const ticker = Array.isArray(tickerResponse)
+                ? tickerResponse[0]
+                : tickerResponse;
+
+              if (!ticker || !ticker.trade_price) {
+                this.logger.log(`⚠️ ${market} 현재가 정보 없음, 스킵`);
+                continue;
+              }
+
               const currentPrice = parseFloat(ticker.trade_price);
+
+              if (isNaN(currentPrice) || currentPrice <= 0) {
+                this.logger.log(
+                  `⚠️ ${market} 현재가 데이터 오류: ${ticker.trade_price}, 스킵`
+                );
+                continue;
+              }
 
               // 고점 계산 로직: 기존 고점 > 현재가 > 매수가 순으로 우선순위
               let highestPrice = currentPrice;
@@ -540,6 +638,7 @@ class TradingBot {
               // 기존 봇 데이터에 고점 정보가 있다면 비교
               if (
                 botData?.highestPrice &&
+                !isNaN(botData.highestPrice) &&
                 botData.highestPrice > highestPrice
               ) {
                 highestPrice = botData.highestPrice;
