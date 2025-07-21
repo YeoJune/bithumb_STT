@@ -2,3 +2,5 @@ node_modules
 .env
 logs
 bot_data.json
+backtest_data
+backtest_results

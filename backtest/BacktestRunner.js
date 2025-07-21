@@ -1,21 +1,23 @@
 const path = require("path");
-const { HistoricalDataProvider } = require("./HistoricalDataProvider");
-const TradingBot = require("../src/TradingBot");
 const BithumbAPI = require("../src/BithumbAPI");
+const BacktestDataProvider = require("./BacktestDataProvider");
+const BacktestDataCollector = require("./BacktestDataCollector");
+const TradingBot = require("../src/TradingBot");
 const TradingEngine = require("../src/TradingEngine");
 const DataManager = require("../src/DataManager");
 const Logger = require("../src/Logger");
 
 /**
  * 백테스트 실행기
- * 과거 데이터를 이용한 전략 테스트
+ * 깔끔한 인터페이스 분리로 과거 데이터를 이용한 전략 테스트
  */
 class BacktestRunner {
   constructor(config = {}) {
     this.config = {
-      startDate: config.startDate,
-      endDate: config.endDate,
-      markets: config.markets || ["KRW-BTC", "KRW-ETH"],
+      markets: config.markets || [], // null이면 모든 KRW 마켓 사용
+      startDate: config.startDate || "2024-01-01",
+      endDate: config.endDate || "2024-12-31",
+      unit: config.unit || 1, // 분봉 단위
       initialBalance: config.initialBalance || 1000000,
       buyAmount: config.buyAmount || 10000,
       profitRatio: config.profitRatio || 0.03,
@@ -26,7 +28,7 @@ class BacktestRunner {
         shortThreshold: 1.8,
         longThreshold: 1.4,
       },
-      speed: config.speed || 1, // 시뮬레이션 속도 (1 = 실시간, 0 = 최대 속도)
+      speed: config.speed || 1,
       ...config,
     };
 
@@ -35,7 +37,12 @@ class BacktestRunner {
       level: config.logLevel || "info",
     });
 
-    this.dataProvider = new HistoricalDataProvider();
+    // 백테스트용 데이터 제공자 초기화
+    this.dataProvider = new BacktestDataProvider({
+      initialBalance: this.config.initialBalance,
+      dataDir: path.join(process.cwd(), "backtest_data"),
+    });
+
     this.results = {
       startTime: Date.now(),
       config: this.config,
@@ -60,23 +67,16 @@ class BacktestRunner {
       // 1. 데이터 준비
       await this.prepareData();
 
-      // 2. 백테스트 환경 설정
-      const backtestData = this.dataProvider.createBacktestData(
-        this.config.markets,
-        this.config.startDate,
-        this.config.endDate
-      );
+      // 2. 트레이딩 봇 초기화
+      const bot = await this.initializeTradingBot();
 
-      // 3. 트레이딩 봇 초기화
-      const bot = await this.initializeTradingBot(backtestData);
+      // 3. 시뮬레이션 실행
+      await this.runSimulation(bot);
 
-      // 4. 시뮬레이션 실행
-      await this.runSimulation(bot, backtestData);
+      // 4. 결과 분석
+      await this.analyzeResults();
 
-      // 5. 결과 분석
-      await this.analyzeResults(bot);
-
-      // 6. 결과 저장
+      // 5. 결과 저장
       await this.saveResults();
 
       this.logger.info("✅ 백테스트 완료");
@@ -91,115 +91,159 @@ class BacktestRunner {
   async prepareData() {
     this.logger.info("📊 과거 데이터 준비 중...");
 
-    for (const market of this.config.markets) {
-      const fileName = `${market}_minutes1_${this.config.startDate}_${this.config.endDate}.json`;
-      const filePath = path.join(this.dataProvider.dataDir, fileName);
+    // 데이터 수집기로 필요한 데이터 다운로드
+    const api = new BithumbAPI();
+    const collector = new BacktestDataCollector(api);
 
-      if (!require("fs").existsSync(filePath)) {
-        this.logger.info(`📥 ${market} 데이터 다운로드 중...`);
-        await this.dataProvider.downloadCandles(
+    let markets;
+
+    // 특정 마켓이 지정된 경우 해당 마켓만 사용
+    if (this.config.markets && this.config.markets.length > 0) {
+      markets = this.config.markets;
+      this.logger.info(`📋 지정된 마켓 사용: ${markets.join(", ")}`);
+    } else {
+      // 모든 KRW 마켓 조회
+      this.logger.info("🔍 거래 가능한 모든 KRW 마켓 조회 중...");
+      try {
+        const allMarkets = await api.getMarkets(false);
+        markets = allMarkets
+          .filter((m) => m.market.startsWith("KRW-"))
+          .map((m) => m.market);
+
+        this.logger.info(`📋 발견된 KRW 마켓: ${markets.length}개`);
+        this.logger.info(
+          `📋 마켓 목록: ${markets.slice(0, 10).join(", ")}${
+            markets.length > 10 ? ` 외 ${markets.length - 10}개` : ""
+          }`
+        );
+      } catch (error) {
+        this.logger.error(`❌ 마켓 목록 조회 실패: ${error.message}`);
+        // 기본값 사용
+        markets = ["KRW-BTC"];
+        this.logger.info(`📋 기본 마켓 사용: ${markets.join(", ")}`);
+      }
+    }
+
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const market of markets) {
+      this.logger.info(`📥 ${market} 캔들 데이터 수집 중...`);
+
+      try {
+        await collector.collectCandles(
           market,
           this.config.startDate,
           this.config.endDate,
-          "minutes",
-          1
+          this.config.unit
         );
-      } else {
-        this.logger.info(`📁 ${market} 기존 데이터 사용`);
-      }
 
-      // 데이터 품질 검증
-      const validation = this.dataProvider.validateData(fileName);
-      if (!validation.valid) {
-        throw new Error(`${market} 데이터 품질 검증 실패: ${validation.error}`);
-      }
+        // 백테스트 데이터 제공자에 데이터 로드
+        this.dataProvider.loadCandleData(
+          market,
+          this.config.startDate,
+          this.config.endDate,
+          this.config.unit
+        );
 
-      this.logger.info(
-        `✅ ${market}: ${validation.totalCandles}개 캔들 (${validation.gaps.length}개 갭)`
-      );
+        this.logger.info(`✅ ${market}: 데이터 로드 완료`);
+        successCount++;
+      } catch (error) {
+        this.logger.error(`❌ ${market} 데이터 준비 실패: ${error.message}`);
+        failCount++;
+        // 개별 마켓 실패는 전체를 중단하지 않음
+        continue;
+      }
+    }
+
+    this.logger.info(
+      `✅ 데이터 준비 완료 - 성공: ${successCount}개, 실패: ${failCount}개`
+    );
+
+    if (successCount === 0) {
+      throw new Error("모든 마켓의 데이터 수집에 실패했습니다.");
     }
   }
 
   // 트레이딩 봇 초기화
-  async initializeTradingBot(backtestData) {
-    const api = new BithumbAPI({
-      isLive: false,
-      backtestData: backtestData,
-    });
+  async initializeTradingBot() {
+    this.logger.info("🤖 트레이딩 봇 초기화 중...");
 
-    const executionEngine = new TradingEngine(api, false);
-    executionEngine.resetBacktestState(this.config.initialBalance);
+    // TradingEngine에 백테스트 데이터 제공자 연결
+    const tradingEngine = new TradingEngine(this.dataProvider, false); // false = 백테스트 모드
 
+    // DataManager 인스턴스 생성 (백테스트용)
     const dataManager = new DataManager({
-      dataFile: path.join(process.cwd(), "backtest_data.json"),
+      dataFile: path.join(process.cwd(), `backtest_data_${Date.now()}.json`),
+      backupEnabled: false, // 백테스트에서는 백업 비활성화
     });
 
+    // TradingBot 생성 (constructor: config, dataProvider, executionEngine, dataManager, logger)
     const bot = new TradingBot(
       this.config,
-      api, // dataProvider
-      executionEngine,
+      this.dataProvider,
+      tradingEngine,
       dataManager,
       this.logger
     );
 
-    await bot.init();
+    this.logger.info("✅ 트레이딩 봇 초기화 완료");
     return bot;
   }
 
   // 시뮬레이션 실행
-  async runSimulation(bot, backtestData) {
+  async runSimulation(bot) {
     this.logger.info("🚀 시뮬레이션 시작");
 
-    const startTime = new Date(this.config.startDate);
-    const endTime = new Date(this.config.endDate);
-    const currentTime = new Date(startTime);
+    const startDate = new Date(this.config.startDate);
+    const endDate = new Date(this.config.endDate);
+    const currentTime = new Date(startDate);
 
-    let cycleCount = 0;
-    let lastDayStats = null;
+    let stepCount = 0;
+    const totalMinutes = Math.floor((endDate - startDate) / (1000 * 60));
 
-    while (currentTime < endTime) {
-      // API에 현재 시간 설정
-      bot.dataProvider.setCurrentTime(currentTime);
+    while (currentTime <= endDate) {
+      // 데이터 제공자의 현재 시간 설정
+      this.dataProvider.setCurrentTime(currentTime);
 
-      // 주문 체결 시뮬레이션
-      for (const market of this.config.markets) {
-        const ticker = await bot.dataProvider.getTicker(market);
-        if (ticker) {
-          bot.executionEngine.simulateOrderExecution(
-            market,
-            ticker.trade_price
-          );
-        }
-      }
-
-      // 트레이딩 사이클 실행
       try {
+        // 봇 실행 (현재 시점의 데이터로)
         await bot.runTradingCycle();
+
+        // 거래 기록 수집
+        if (bot.lastTrade) {
+          this.results.trades.push({
+            ...bot.lastTrade,
+            timestamp: currentTime.toISOString(),
+          });
+          bot.lastTrade = null; // 초기화
+        }
+
+        // 진행률 표시
+        if (stepCount % 1440 === 0) {
+          // 하루마다
+          const progress = (
+            ((currentTime - startDate) / (endDate - startDate)) *
+            100
+          ).toFixed(1);
+          this.logger.info(
+            `📈 진행률: ${progress}% (${
+              currentTime.toISOString().split("T")[0]
+            })`
+          );
+
+          // 일별 통계 수집
+          await this.collectDailyStats(currentTime);
+        }
       } catch (error) {
-        this.logger.warn(`⚠️ 트레이딩 사이클 오류: ${error.message}`);
-      }
-
-      // 일일 통계 수집
-      const dayKey = currentTime.toISOString().slice(0, 10);
-      if (!lastDayStats || lastDayStats !== dayKey) {
-        await this.collectDailyStats(bot, currentTime);
-        lastDayStats = dayKey;
-      }
-
-      // 시간 진행 (30초 간격)
-      currentTime.setSeconds(currentTime.getSeconds() + 30);
-      cycleCount++;
-
-      // 진행률 표시
-      if (cycleCount % 1000 === 0) {
-        const progress =
-          ((currentTime - startTime) / (endTime - startTime)) * 100;
-        this.logger.info(
-          `📈 진행률: ${progress.toFixed(1)}% (${currentTime
-            .toISOString()
-            .slice(0, 16)})`
+        this.logger.error(
+          `⚠️ 시뮬레이션 오류 (${currentTime.toISOString()}): ${error.message}`
         );
       }
+
+      // 다음 시점으로 이동 (분봉 단위)
+      currentTime.setMinutes(currentTime.getMinutes() + this.config.unit);
+      stepCount++;
 
       // 속도 조절
       if (this.config.speed > 0) {
@@ -207,318 +251,118 @@ class BacktestRunner {
       }
     }
 
-    this.logger.info(`🎯 시뮬레이션 완료: ${cycleCount}회 사이클 실행`);
+    this.logger.info("✅ 시뮬레이션 완료");
   }
 
-  // 일일 통계 수집
-  async collectDailyStats(bot, date) {
-    const stats = bot.getStats();
-    const balance = await bot.executionEngine.getBalance();
-    const holdings = await bot.executionEngine.getAllHoldings();
-
-    // 보유 자산 평가
-    let totalHoldingValue = 0;
-    for (const [market, holding] of Object.entries(holdings)) {
-      try {
-        const ticker = await bot.dataProvider.getTicker(market);
-        if (ticker) {
-          totalHoldingValue += holding.totalQty * ticker.trade_price;
-        }
-      } catch (error) {
-        // 티커 조회 실패 시 매수가로 평가
-        totalHoldingValue += holding.totalQty * (holding.avgBuyPrice || 0);
+  // 일별 통계 수집
+  async collectDailyStats(date) {
+    const accounts = await this.dataProvider.getAccounts();
+    const totalBalance = accounts.reduce((sum, account) => {
+      if (account.currency === "KRW") {
+        return sum + parseFloat(account.balance);
       }
-    }
+      return sum; // 코인 가치 계산은 복잡하므로 일단 KRW만
+    }, 0);
 
-    const totalAssets = balance + totalHoldingValue;
-    const profit = totalAssets - this.config.initialBalance;
-    const profitRate = (profit / this.config.initialBalance) * 100;
-
-    const dailyStat = {
-      date: date.toISOString().slice(0, 10),
-      balance: balance,
-      totalHoldingValue: totalHoldingValue,
-      totalAssets: totalAssets,
-      profit: profit,
-      profitRate: profitRate,
-      trades: stats.trades,
-      wins: stats.wins,
-      losses: stats.losses,
-      winRate: stats.winRate,
-      holdingsCount: Object.keys(holdings).length,
-    };
-
-    this.results.dailyStats.push(dailyStat);
-
-    this.logger.debug(
-      `📊 ${dailyStat.date}: 총자산 ${totalAssets.toLocaleString()}원 (${
-        profitRate > 0 ? "+" : ""
-      }${profitRate.toFixed(2)}%)`
-    );
+    this.results.dailyStats.push({
+      date: date.toISOString().split("T")[0],
+      balance: totalBalance,
+      trades: this.results.trades.length,
+      profit: totalBalance - this.config.initialBalance,
+    });
   }
 
   // 결과 분석
-  async analyzeResults(bot) {
+  async analyzeResults() {
     this.logger.info("📊 결과 분석 중...");
 
-    const finalStats = bot.getStats();
-    const finalBalance = await bot.executionEngine.getBalance();
-    const finalHoldings = await bot.executionEngine.getAllHoldings();
-    const backtestResult = bot.executionEngine.getBacktestResult();
+    const accounts = await this.dataProvider.getAccounts();
+    const finalBalance =
+      accounts.find((acc) => acc.currency === "KRW")?.balance || 0;
 
-    // 최종 자산 평가
-    let finalHoldingValue = 0;
-    for (const [market, holding] of Object.entries(finalHoldings)) {
-      finalHoldingValue += holding.totalQty * (holding.avgBuyPrice || 0);
-    }
-
-    const finalAssets = finalBalance + finalHoldingValue;
-    const totalProfit = finalAssets - this.config.initialBalance;
-    const totalProfitRate = (totalProfit / this.config.initialBalance) * 100;
-
-    // 최대 손실 계산 (MDD)
-    let maxAssets = this.config.initialBalance;
-    let maxDrawdown = 0;
-    let maxDrawdownRate = 0;
-
-    this.results.dailyStats.forEach((stat) => {
-      maxAssets = Math.max(maxAssets, stat.totalAssets);
-      const drawdown = maxAssets - stat.totalAssets;
-      const drawdownRate = (drawdown / maxAssets) * 100;
-
-      if (drawdown > maxDrawdown) {
-        maxDrawdown = drawdown;
-        maxDrawdownRate = drawdownRate;
-      }
-    });
-
-    // Sharpe Ratio 계산 (간단한 버전)
-    const dailyReturns = this.results.dailyStats
-      .map((stat, index) => {
-        if (index === 0) return 0;
-        const prevAssets = this.results.dailyStats[index - 1].totalAssets;
-        return (stat.totalAssets - prevAssets) / prevAssets;
-      })
-      .slice(1);
-
-    const avgDailyReturn =
-      dailyReturns.reduce((sum, ret) => sum + ret, 0) / dailyReturns.length;
-    const stdDailyReturn = Math.sqrt(
-      dailyReturns.reduce(
-        (sum, ret) => sum + Math.pow(ret - avgDailyReturn, 2),
-        0
-      ) / dailyReturns.length
-    );
-    const sharpeRatio =
-      stdDailyReturn > 0
-        ? (avgDailyReturn / stdDailyReturn) * Math.sqrt(365)
-        : 0;
+    const totalTrades = this.results.trades.length;
+    const profitableTrades = this.results.trades.filter(
+      (t) => t.profit > 0
+    ).length;
+    const totalProfit = finalBalance - this.config.initialBalance;
+    const returnRate = (totalProfit / this.config.initialBalance) * 100;
 
     this.results.finalStats = {
-      // 기본 정보
-      duration: `${this.config.startDate} ~ ${this.config.endDate}`,
-      tradingDays: this.results.dailyStats.length,
-
-      // 수익성
-      initialBalance: this.config.initialBalance,
-      finalBalance: finalBalance,
-      finalHoldingValue: finalHoldingValue,
-      finalAssets: finalAssets,
-      totalProfit: totalProfit,
-      totalProfitRate: totalProfitRate,
-
-      // 거래 통계
-      totalTrades: finalStats.trades,
-      winningTrades: finalStats.wins,
-      losingTrades: finalStats.losses,
-      winRate: finalStats.winRate,
-      avgTradesPerDay: finalStats.trades / this.results.dailyStats.length,
-
-      // 리스크 지표
-      maxDrawdown: maxDrawdown,
-      maxDrawdownRate: maxDrawdownRate,
-      sharpeRatio: sharpeRatio,
-
-      // 기타
-      finalHoldings: Object.keys(finalHoldings).length,
-      backtestDuration: Date.now() - this.results.startTime,
+      초기자금: this.config.initialBalance,
+      최종자금: finalBalance,
+      총수익: totalProfit,
+      수익률: returnRate,
+      총거래: totalTrades,
+      수익거래: profitableTrades,
+      승률: totalTrades > 0 ? (profitableTrades / totalTrades) * 100 : 0,
+      기간: `${this.config.startDate} ~ ${this.config.endDate}`,
+      실행시간: Date.now() - this.results.startTime,
     };
 
-    // 결과 로깅
-    this.logger.info("📈 === 백테스트 결과 ===");
-    this.logger.info(`🏦 최종 자산: ${finalAssets.toLocaleString()}원`);
+    this.logger.info("✅ 결과 분석 완료");
     this.logger.info(
-      `💰 총 수익: ${
-        totalProfit > 0 ? "+" : ""
-      }${totalProfit.toLocaleString()}원 (${
-        totalProfitRate > 0 ? "+" : ""
-      }${totalProfitRate.toFixed(2)}%)`
-    );
-    this.logger.info(
-      `📊 총 거래: ${finalStats.trades}회 (승률: ${finalStats.winRate}%)`
-    );
-    this.logger.info(
-      `📉 최대 손실: ${maxDrawdown.toLocaleString()}원 (${maxDrawdownRate.toFixed(
+      `💰 최종 결과: ${totalProfit.toLocaleString()}원 (${returnRate.toFixed(
         2
       )}%)`
     );
-    this.logger.info(`📈 샤프 비율: ${sharpeRatio.toFixed(3)}`);
   }
 
   // 결과 저장
   async saveResults() {
-    const dataManager = new DataManager();
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const fileName = `backtest_${this.config.startDate}_${this.config.endDate}_${timestamp}.json`;
+    const filename = `backtest_result_${timestamp}.json`;
+    const filepath = path.join(process.cwd(), "backtest_results", filename);
 
-    const resultPath = await dataManager.saveBacktestResult(
-      this.results,
-      fileName
-    );
-    this.logger.info(`💾 결과 저장 완료: ${resultPath}`);
-
-    // 요약 파일도 생성
-    const summary = {
-      config: this.config,
-      finalStats: this.results.finalStats,
-      createdAt: new Date().toISOString(),
-    };
-
-    const summaryPath = resultPath.replace(".json", "_summary.json");
-    require("fs").writeFileSync(summaryPath, JSON.stringify(summary, null, 2));
-
-    return resultPath;
-  }
-
-  // 결과 비교 (여러 백테스트 결과 비교)
-  static async compareResults(resultFiles) {
-    const results = [];
-
-    for (const file of resultFiles) {
-      try {
-        const dataManager = new DataManager();
-        const result = await dataManager.loadBacktestResult(file);
-        results.push({
-          file,
-          stats: result.finalStats,
-        });
-      } catch (error) {
-        console.error(`결과 로드 실패: ${file} - ${error.message}`);
-      }
+    // 디렉토리 생성
+    const fs = require("fs");
+    const dir = path.dirname(filepath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
     }
 
-    // 성능 순으로 정렬
-    results.sort((a, b) => b.stats.totalProfitRate - a.stats.totalProfitRate);
+    fs.writeFileSync(filepath, JSON.stringify(this.results, null, 2));
+    this.logger.info(`💾 결과 저장: ${filename}`);
+  }
 
-    console.log("\n📊 백테스트 결과 비교");
-    console.log("─".repeat(100));
-    console.log("순위 | 파일명 | 수익률 | 총거래 | 승률 | MDD | 샤프");
-    console.log("─".repeat(100));
-
-    results.forEach((result, index) => {
-      const stats = result.stats;
-      console.log(
-        `${(index + 1).toString().padStart(2)} | ` +
-          `${result.file.slice(0, 20).padEnd(20)} | ` +
-          `${stats.totalProfitRate.toFixed(2).padStart(6)}% | ` +
-          `${stats.totalTrades.toString().padStart(5)} | ` +
-          `${stats.winRate.padStart(5)}% | ` +
-          `${stats.maxDrawdownRate.toFixed(2).padStart(5)}% | ` +
-          `${stats.sharpeRatio.toFixed(3).padStart(5)}`
-      );
+  // 결과 비교 (정적 메서드)
+  static async compareResults(resultFiles) {
+    const fs = require("fs");
+    const results = resultFiles.map((file) => {
+      const data = JSON.parse(fs.readFileSync(file, "utf8"));
+      return {
+        file: path.basename(file),
+        ...data.finalStats,
+      };
     });
 
+    // 수익률 기준 정렬
+    results.sort((a, b) => b.수익률 - a.수익률);
+
+    console.table(results);
     return results;
   }
 }
 
-// CLI 실행
+module.exports = BacktestRunner;
+
+// 직접 실행 시 테스트 실행
 if (require.main === module) {
-  const args = process.argv.slice(2);
-  const config = {};
+  const runner = new BacktestRunner({
+    // markets: ["KRW-BTC"], // 주석 처리하여 모든 KRW 마켓 사용
+    startDate: "2025-07-11",
+    endDate: "2025-07-14",
+    unit: 5, // 5분봉
+    initialBalance: 1000000,
+    speed: 0, // 최고 속도
+  });
 
-  // 명령행 인수 파싱
-  for (let i = 0; i < args.length; i += 2) {
-    const key = args[i].replace("--", "");
-    const value = args[i + 1];
-
-    if (key === "help") {
-      console.log(`
-🔬 백테스트 실행기 사용법
-
-node backtest/BacktestRunner.js [옵션]
-
-옵션:
-  --start-date YYYY-MM-DD    시작 날짜 (기본값: 30일 전)
-  --end-date YYYY-MM-DD      종료 날짜 (기본값: 오늘)
-  --markets BTC,ETH          테스트할 마켓 (기본값: BTC,ETH)
-  --initial-balance 1000000  초기 자금 (기본값: 1,000,000)
-  --buy-amount 10000         매수 금액 (기본값: 10,000)
-  --profit-ratio 0.03        익절 비율 (기본값: 0.03)
-  --loss-ratio 0.015         손절 비율 (기본값: 0.015)
-  --speed 0                  시뮬레이션 속도 (기본값: 0=최대속도)
-
-예시:
-  node backtest/BacktestRunner.js --start-date 2024-01-01 --end-date 2024-03-31
-      `);
-      process.exit(0);
-    }
-
-    switch (key) {
-      case "start-date":
-        config.startDate = value;
-        break;
-      case "end-date":
-        config.endDate = value;
-        break;
-      case "markets":
-        config.markets = value.split(",").map((m) => `KRW-${m.trim()}`);
-        break;
-      case "initial-balance":
-        config.initialBalance = parseInt(value);
-        break;
-      case "buy-amount":
-        config.buyAmount = parseInt(value);
-        break;
-      case "profit-ratio":
-        config.profitRatio = parseFloat(value);
-        break;
-      case "loss-ratio":
-        config.lossRatio = parseFloat(value);
-        break;
-      case "speed":
-        config.speed = parseInt(value);
-        break;
-    }
-  }
-
-  // 기본값 설정
-  if (!config.startDate) {
-    const date = new Date();
-    date.setDate(date.getDate() - 30);
-    config.startDate = date.toISOString().slice(0, 10);
-  }
-
-  if (!config.endDate) {
-    config.endDate = new Date().toISOString().slice(0, 10);
-  }
-
-  // 백테스트 실행
-  const runner = new BacktestRunner(config);
   runner
     .run()
     .then((results) => {
-      console.log("\n✅ 백테스트 완료!");
-      console.log(
-        `📊 총 수익률: ${results.finalStats.totalProfitRate.toFixed(2)}%`
-      );
-      console.log(`📈 총 거래: ${results.finalStats.totalTrades}회`);
-      console.log(`🎯 승률: ${results.finalStats.winRate}%`);
+      console.log("\n🎉 백테스트 완료!");
+      console.table(results.finalStats);
     })
     .catch((error) => {
       console.error("❌ 백테스트 실패:", error.message);
-      process.exit(1);
     });
 }
-
-module.exports = BacktestRunner;
