@@ -99,15 +99,14 @@ class TradingBot {
   async getVolumeSignal(market) {
     try {
       const totalMinutes = this.timeframes.short + this.timeframes.long;
-      const { unit, count } = this.getOptimalUnit(totalMinutes);
+      const { unit } = this.getOptimalUnit(this.timeframes.short);
+      const count = Math.ceil(this.timeframes.long / unit);
       const candles = await this.dataProvider.getCandles(
         market,
         count,
         null,
         unit
       );
-
-      if (!candles || candles.length < count) return null;
 
       const getVolume = (candle) => parseFloat(candle.candle_acc_trade_price);
       const currentVolume = getVolume(candles[0]);
@@ -141,19 +140,17 @@ class TradingBot {
     }
   }
 
-  // 이동평균 계산
+  // 이동평균 계산 (기존 호환성 유지)
   async getMovingAverages(market) {
     try {
-      const totalMinutes = this.movingAverages.long;
-      const { unit, count } = this.getOptimalUnit(totalMinutes);
+      const { unit } = this.getOptimalUnit(this.movingAverages.short);
+      const count = Math.ceil(this.movingAverages.long / unit);
       const candles = await this.dataProvider.getCandles(
         market,
         count,
         null,
         unit
       );
-
-      if (!candles || candles.length < count) return null;
 
       const prices = candles.map((candle) => parseFloat(candle.trade_price));
 
@@ -174,20 +171,82 @@ class TradingBot {
     }
   }
 
-  // 골든크로스 확인 (단기MA > 장기MA)
-  async checkGoldenCross(market) {
-    const ma = await this.getMovingAverages(market);
-    if (!ma) return false;
+  /**
+   * @private
+   * 현재와 직전 시점의 단기/장기 이동평균을 계산합니다.
+   * "교차 시점"을 정확히 감지하기 위해 사용됩니다.
+   */
+  async _getMAValues(market) {
+    try {
+      const { unit } = this.getOptimalUnit(this.movingAverages.short);
+      // 직전 값을 계산하기 위해 필요한 캔들 수 + 1
+      const count = Math.ceil(this.movingAverages.long / unit) + 1;
+      const candles = await this.dataProvider.getCandles(
+        market,
+        count,
+        null,
+        unit
+      );
 
-    return ma.shortMA > ma.longMA;
+      // 캔들이 충분하지 않으면 계산 불가
+      if (candles.length < count) {
+        return null;
+      }
+
+      const prices = candles.map((c) => parseFloat(c.trade_price));
+
+      const shortN = Math.ceil(this.movingAverages.short / unit);
+      const longN = Math.ceil(this.movingAverages.long / unit);
+
+      // 숫자 배열의 평균을 계산하는 작은 헬퍼 함수
+      const average = (arr) =>
+        arr.reduce((sum, val) => sum + val, 0) / arr.length;
+
+      // 현재 시점의 이동평균 (prices 배열의 0번 인덱스부터 시작)
+      const shortMA_now = average(prices.slice(0, shortN));
+      const longMA_now = average(prices.slice(0, longN));
+
+      // 직전 시점의 이동평균 (prices 배열의 1번 인덱스부터 시작)
+      const shortMA_prev = average(prices.slice(1, shortN + 1));
+      const longMA_prev = average(prices.slice(1, longN + 1));
+
+      return {
+        shortMA_now,
+        longMA_now,
+        shortMA_prev,
+        longMA_prev,
+      };
+    } catch (error) {
+      this.logger.log(`❌ ${market} 이동평균 계산 실패: ${error.message}`);
+      return null;
+    }
   }
 
-  // 데드크로스 확인 (단기MA < 장기MA)
-  async checkDeadCross(market) {
-    const ma = await this.getMovingAverages(market);
-    if (!ma) return false;
+  // 골든크로스 확인 (단기MA가 장기MA를 상향 "돌파"하는 순간)
+  async checkGoldenCross(market) {
+    const maValues = await this._getMAValues(market);
+    if (!maValues) return false;
 
-    return ma.shortMA < ma.longMA;
+    const { shortMA_now, longMA_now, shortMA_prev, longMA_prev } = maValues;
+
+    // 조건: (이전에는 단기MA가 장기MA보다 아래에 있었고) AND (현재는 단기MA가 장기MA보다 위에 있다)
+    const isGoldenCross =
+      shortMA_prev <= longMA_prev && shortMA_now > longMA_now;
+
+    return isGoldenCross;
+  }
+
+  // 데드크로스 확인 (단기MA가 장기MA를 하향 "돌파"하는 순간)
+  async checkDeadCross(market) {
+    const maValues = await this._getMAValues(market);
+    if (!maValues) return false;
+
+    const { shortMA_now, longMA_now, shortMA_prev, longMA_prev } = maValues;
+
+    // 조건: (이전에는 단기MA가 장기MA보다 위에 있었고) AND (현재는 단기MA가 장기MA보다 아래에 있다)
+    const isDeadCross = shortMA_prev >= longMA_prev && shortMA_now < longMA_now;
+
+    return isDeadCross;
   }
 
   // 매수 신호 확인 (거래대금 + 골든크로스)
@@ -757,7 +816,7 @@ class TradingBot {
     try {
       const now = Date.now();
 
-      // 30초마다 거래대금 필터링
+      // Interval마다 거래대금 필터링
       if (now - this.lastVolumeCheck >= this.volumeFilterInterval) {
         await this.updateVolumeWatchList();
         this.lastVolumeCheck = now;
