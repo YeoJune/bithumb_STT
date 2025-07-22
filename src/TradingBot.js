@@ -12,8 +12,8 @@ class TradingBot {
     this.buyFeeRate = config.fees?.buy || 0.0004; // 매수 수수료
     this.sellFeeRate = config.fees?.sell || 0.0004; // 매도 수수료
     this.timeframes = config.timeframes || {
-      short: 15,
-      long: 60,
+      short: 3, // 일봉 기준 3일
+      long: 30, // 일봉 기준 30일
       shortThreshold: 1.2,
       longThreshold: 1.2,
     };
@@ -95,33 +95,37 @@ class TradingBot {
     return { unit, count: Math.ceil(totalMinutes / unit) };
   }
 
-  // 거래대금 급증 신호 분석
+  // 거래대금 급증 신호 분석 (일봉 기준)
   async getVolumeSignal(market) {
     try {
-      const totalMinutes = this.timeframes.short + this.timeframes.long;
-      const unit = 1;
-      const count = Math.ceil(this.timeframes.long / unit) + 1; // 최신 캔들을 버리기 위해 +1
-      const candles = await this.dataProvider.getCandles(
+      // timeframes 설정 사용: short와 long을 일 단위로 활용
+      const shortDays = this.timeframes.short;
+      const longDays = this.timeframes.long;
+      const count = longDays + 1; // 최신 캔들을 버리기 위해 +1
+
+      // 일봉 데이터 조회
+      const candles = await this.dataProvider.getDayCandles(
         market,
         count,
-        null,
-        unit
+        null
       );
 
-      const getVolume = (candle) => parseFloat(candle.candle_acc_trade_price);
-      const currentVolume = getVolume(candles[1]); // 2번째 캔들부터 사용
+      if (!candles || candles.length < count) {
+        return null;
+      }
 
-      // 단기: 2번째 캔들부터 short 시간만큼
-      const shortCandleCount = Math.ceil(this.timeframes.short / unit);
-      const shortCandles = candles.slice(1, 1 + shortCandleCount);
+      const getVolume = (candle) => parseFloat(candle.candle_acc_trade_price);
+      const currentVolume = getVolume(candles[1]); // 2번째 캔들부터 사용 (어제 거래량)
+
+      // 단기: 2번째 캔들부터 short일간의 평균
+      const shortCandles = candles.slice(1, 1 + shortDays);
       const shortAvg =
         shortCandles.reduce((sum, candle) => sum + getVolume(candle), 0) /
         shortCandles.length;
 
-      // 장기: 단기 이후부터 long 시간만큼 (겹치지 않게)
-      const longStart = 1 + shortCandleCount;
-      const longCandleCount = Math.ceil(this.timeframes.long / unit);
-      const longCandles = candles.slice(longStart, longStart + longCandleCount);
+      // 장기: 단기 이후부터 long일간의 평균 (겹치지 않게)
+      const longStart = 1 + shortDays;
+      const longCandles = candles.slice(longStart, longStart + longDays);
       const longAvg =
         longCandles.reduce((sum, candle) => sum + getVolume(candle), 0) /
         longCandles.length;

@@ -188,8 +188,8 @@ const config = {
 
   // 거래대금 필터 (기존 유지)
   timeframes: {
-    short: 10, // 단기 평균 10분
-    long: 120, // 장기 평균 120분
+    short: 3, // 단기 평균 3일
+    long: 15, // 장기 평균 15일
     shortThreshold: 1.2, // 현재 vs 단기 1.2배
     longThreshold: 1.2, // 단기 vs 장기 1.2배
   },
