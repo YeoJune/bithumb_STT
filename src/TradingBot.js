@@ -91,8 +91,11 @@ class TradingBot {
   // 거래대금 급증 신호 분석
   async getVolumeSignal(market) {
     try {
-      const totalMinutes = this.timeframes.short + this.timeframes.long + 1;
-      const candles = await this.dataProvider.getCandles(market, totalMinutes);
+      const totalMinutes = this.timeframes.short + this.timeframes.long;
+      const candles = await this.dataProvider.getOptimizedCandles(
+        market,
+        totalMinutes
+      );
 
       if (!candles || candles.length < totalMinutes) return null;
 
@@ -129,7 +132,10 @@ class TradingBot {
   async getMovingAverages(market) {
     try {
       const totalMinutes = this.movingAverages.long; // 장기 이동평균만큼 데이터 필요
-      const candles = await this.dataProvider.getCandles(market, totalMinutes);
+      const candles = await this.dataProvider.getOptimizedCandles(
+        market,
+        totalMinutes
+      );
 
       if (!candles || candles.length < totalMinutes) return null;
 
