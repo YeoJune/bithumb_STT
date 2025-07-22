@@ -182,16 +182,16 @@ const config = {
 
   // 이동평균 설정 (분 단위)
   movingAverages: {
-    short: 5, // 단기 이동평균 5분
-    long: 15, // 장기 이동평균 15분
+    short: 10, // 단기 이동평균 10분
+    long: 30, // 장기 이동평균 30분
   },
 
   // 거래대금 필터 (기존 유지)
   timeframes: {
     short: 3, // 단기 평균 3일
-    long: 15, // 장기 평균 15일
-    shortThreshold: 1.2, // 현재 vs 단기 1.2배
-    longThreshold: 1.2, // 단기 vs 장기 1.2배
+    long: 30, // 장기 평균 30일
+    shortThreshold: 1.5, // 현재 vs 단기 1.5배
+    longThreshold: 2, // 단기 vs 장기 2배
   },
 
   // 수수료 설정
