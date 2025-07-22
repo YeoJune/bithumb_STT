@@ -178,7 +178,7 @@ const config = {
   buyAmount: 10000, // 1만원씩 매수
   profitRatio: 0.03, // 3% 익절 (사용 안함)
   lossRatio: 0.015, // 1.5% 손절
-  webPort: 80, // 웹 인터페이스 포트
+  webPort: 3000, // 웹 인터페이스 포트
 
   // 이동평균 설정 (분 단위)
   movingAverages: {
