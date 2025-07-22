@@ -99,8 +99,8 @@ class TradingBot {
   async getVolumeSignal(market) {
     try {
       const totalMinutes = this.timeframes.short + this.timeframes.long;
-      const { unit } = this.getOptimalUnit(this.timeframes.short);
-      const count = Math.ceil(this.timeframes.long / unit);
+      const unit = 1;
+      const count = Math.ceil(this.timeframes.long / unit) + 1; // 최신 캔들을 버리기 위해 +1
       const candles = await this.dataProvider.getCandles(
         market,
         count,
@@ -109,9 +109,9 @@ class TradingBot {
       );
 
       const getVolume = (candle) => parseFloat(candle.candle_acc_trade_price);
-      const currentVolume = getVolume(candles[0]);
+      const currentVolume = getVolume(candles[1]); // 2번째 캔들부터 사용
 
-      // 단기: 최신 다음부터 short 시간만큼
+      // 단기: 2번째 캔들부터 short 시간만큼
       const shortCandleCount = Math.ceil(this.timeframes.short / unit);
       const shortCandles = candles.slice(1, 1 + shortCandleCount);
       const shortAvg =
@@ -143,8 +143,8 @@ class TradingBot {
   // 이동평균 계산 (기존 호환성 유지)
   async getMovingAverages(market) {
     try {
-      const { unit } = this.getOptimalUnit(this.movingAverages.short);
-      const count = Math.ceil(this.movingAverages.long / unit);
+      const unit = 1;
+      const count = Math.ceil(this.movingAverages.long / unit) + 1; // 최신 캔들을 버리기 위해 +1
       const candles = await this.dataProvider.getCandles(
         market,
         count,
@@ -152,7 +152,9 @@ class TradingBot {
         unit
       );
 
-      const prices = candles.map((candle) => parseFloat(candle.trade_price));
+      const prices = candles
+        .slice(1)
+        .map((candle) => parseFloat(candle.trade_price)); // 2번째 캔들부터 사용
 
       // 단기 이동평균: 최신부터 short 시간만큼
       const shortCandleCount = Math.ceil(this.movingAverages.short / unit);
@@ -178,9 +180,9 @@ class TradingBot {
    */
   async _getMAValues(market) {
     try {
-      const { unit } = this.getOptimalUnit(this.movingAverages.short);
-      // 직전 값을 계산하기 위해 필요한 캔들 수 + 1
-      const count = Math.ceil(this.movingAverages.long / unit) + 1;
+      const unit = 1;
+      // 직전 값을 계산하기 위해 필요한 캔들 수 + 1 + 최신 캔들 제외 1 = +2
+      const count = Math.ceil(this.movingAverages.long / unit) + 2;
       const candles = await this.dataProvider.getCandles(
         market,
         count,
@@ -193,7 +195,7 @@ class TradingBot {
         return null;
       }
 
-      const prices = candles.map((c) => parseFloat(c.trade_price));
+      const prices = candles.slice(1).map((c) => parseFloat(c.trade_price)); // 2번째 캔들부터 사용
 
       const shortN = Math.ceil(this.movingAverages.short / unit);
       const longN = Math.ceil(this.movingAverages.long / unit);
