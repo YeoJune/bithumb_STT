@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bithumb Trading Bot Dashboard</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>🚀 Bithumb Trading Bot Dashboard</h1>
+        <div class="status-indicator">
+          <span id="status-text">연결 중...</span>
+          <div id="status-dot" class="status-dot"></div>
+        </div>
+      </header>
+
+      <div class="dashboard-grid">
+        <!-- 주요 지표 -->
+        <div class="card stats-card">
+          <h3>📊 주요 지표</h3>
+          <div class="stats-grid">
+            <div class="stat-item">
+              <span class="stat-label">런타임</span>
+              <span id="runtime" class="stat-value">0분</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">보유 종목</span>
+              <span id="holdings-count" class="stat-value">0개</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">총 거래</span>
+              <span id="total-trades" class="stat-value">0회</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">승률</span>
+              <span id="win-rate" class="stat-value">0%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 수익/손실 -->
+        <div class="card profit-card">
+          <h3>💰 수익/손실</h3>
+          <div id="total-profit" class="profit-amount">+0원</div>
+          <div class="profit-breakdown">
+            <span>성공: <span id="wins" class="win-count">0</span>회</span>
+            <span>실패: <span id="losses" class="loss-count">0</span>회</span>
+          </div>
+        </div>
+
+        <!-- 현재 상태 -->
+        <div class="card status-card">
+          <h3>🔍 현재 상태</h3>
+          <div class="status-info">
+            <p>
+              <strong>스캔:</strong> <span id="current-scan">대기 중...</span>
+            </p>
+            <p>
+              <strong>마지막 활동:</strong> <span id="last-activity">없음</span>
+            </p>
+          </div>
+        </div>
+
+        <!-- 설정 정보 -->
+        <div class="card config-card">
+          <h3>⚙️ 설정</h3>
+          <div id="config-info" class="config-info">
+            <p>매수 금액: <span id="buy-amount">0원</span></p>
+            <p>손절률: <span id="loss-ratio">0%</span></p>
+            <p>이동평균: <span id="ma-settings">5분/15분</span></p>
+          </div>
+        </div>
+
+        <!-- 보유 종목 -->
+        <div class="card holdings-card">
+          <h3>📦 보유 종목</h3>
+          <div id="holdings-list" class="holdings-list">
+            <p class="no-holdings">보유 종목이 없습니다.</p>
+          </div>
+        </div>
+
+        <!-- 감시 대상 -->
+        <div class="card watchlist-card">
+          <h3>👀 감시 대상</h3>
+          <div id="watchlist-list" class="watchlist-list">
+            <p class="no-watchlist">감시 대상이 없습니다.</p>
+          </div>
+        </div>
+
+        <!-- 최근 로그 -->
+        <div class="card logs-card">
+          <h3>📋 최근 로그</h3>
+          <div id="logs-container" class="logs-container">
+            <p class="no-logs">로그를 불러오는 중...</p>
+          </div>
+        </div>
+      </div>
+
+      <footer>
+        <p>마지막 업데이트: <span id="last-update">-</span></p>
+        <button id="refresh-btn" class="refresh-btn">🔄 새로고침</button>
+      </footer>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

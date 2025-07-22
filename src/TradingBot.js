@@ -786,6 +786,7 @@ class TradingBot {
       winRate,
       totalProfit: this.stats.totalProfit,
       holdings: this.holdings,
+      watchList: this.watchList,
       currentScan: this.stats.currentScan,
       lastActivity: this.stats.lastActivity,
     };
