@@ -82,11 +82,9 @@ class BithumbTradingBot {
         `🚀 빗썸 트레이딩 봇 시작 (매수: ${this.tradingBot.buyAmount.toLocaleString()}원)`
       );
       this.logger.log(
-        `📊 설정: 익절 ${(this.tradingBot.profitRatio * 100).toFixed(
-          1
-        )}%, 손절 ${(this.tradingBot.lossRatio * 100).toFixed(1)}%, 트레일링 ${(
-          this.tradingBot.trailingStopRatio * 100
-        ).toFixed(1)}%`
+        `📊 설정: 손절 ${(this.tradingBot.lossRatio * 100).toFixed(1)}%, MA ${
+          this.tradingBot.movingAverages.short
+        }분/${this.tradingBot.movingAverages.long}분`
       );
 
       if (Object.keys(this.tradingBot.holdings).length > 0) {
@@ -152,16 +150,25 @@ class BithumbTradingBot {
 
 // 설정
 const config = {
-  refreshInterval: 30, // 30초마다 데이터 갱신
+  refreshInterval: 5, // 5초마다 메인 루프 실행
+  volumeFilterInterval: 30, // 30초마다 거래대금 필터링
   buyAmount: 10000, // 1만원씩 매수
-  profitRatio: 0.03, // 3% 익절
+  profitRatio: 0.03, // 3% 익절 (사용 안함)
   lossRatio: 0.015, // 1.5% 손절
-  trailingStopRatio: 0.005, // 고점 대비 0.5% 하락 시 매도
+  trailingStopRatio: 0.005, // 고점 대비 0.5% 하락 시 매도 (사용 안함)
+
+  // 이동평균 설정 (분 단위)
+  movingAverages: {
+    short: 5, // 단기 이동평균 5분
+    long: 30, // 장기 이동평균 30분
+  },
+
+  // 거래대금 필터 (기존 유지)
   timeframes: {
     short: 5, // 단기 평균 5분
-    long: 60, // 장기 평균 60분
-    shortThreshold: 3, // 현재 vs 단기 3배
-    longThreshold: 2, // 단기 vs 장기 2배
+    long: 180, // 장기 평균 180분
+    shortThreshold: 1.5, // 현재 vs 단기 1.5배
+    longThreshold: 1.5, // 단기 vs 장기 1.5배
   },
 };
 
