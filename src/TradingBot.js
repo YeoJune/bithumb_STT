@@ -112,17 +112,17 @@ class TradingBot {
       const getVolume = (candle) => parseFloat(candle.candle_acc_trade_price);
       const currentVolume = getVolume(candles[0]);
 
-      const shortCount = Math.ceil(this.timeframes.short / unit);
-      const longCount = Math.ceil(this.timeframes.long / unit);
-
-      const shortCandles = candles.slice(1, shortCount + 1);
+      // 단기: 최신 다음부터 short 시간만큼
+      const shortCandleCount = Math.ceil(this.timeframes.short / unit);
+      const shortCandles = candles.slice(1, 1 + shortCandleCount);
       const shortAvg =
         shortCandles.reduce((sum, candle) => sum + getVolume(candle), 0) /
         shortCandles.length;
 
-      const longStart = shortCount + 1;
-      const longEnd = longStart + longCount;
-      const longCandles = candles.slice(longStart, longEnd);
+      // 장기: 단기 이후부터 long 시간만큼 (겹치지 않게)
+      const longStart = 1 + shortCandleCount;
+      const longCandleCount = Math.ceil(this.timeframes.long / unit);
+      const longCandles = candles.slice(longStart, longStart + longCandleCount);
       const longAvg =
         longCandles.reduce((sum, candle) => sum + getVolume(candle), 0) /
         longCandles.length;
@@ -156,11 +156,15 @@ class TradingBot {
       if (!candles || candles.length < count) return null;
 
       const prices = candles.map((candle) => parseFloat(candle.trade_price));
-      const shortCount = Math.ceil(this.movingAverages.short / unit);
 
+      // 단기 이동평균: 최신부터 short 시간만큼
+      const shortCandleCount = Math.ceil(this.movingAverages.short / unit);
       const shortMA =
-        prices.slice(0, shortCount).reduce((sum, price) => sum + price, 0) /
-        shortCount;
+        prices
+          .slice(0, shortCandleCount)
+          .reduce((sum, price) => sum + price, 0) / shortCandleCount;
+
+      // 장기 이동평균: 전체 데이터 (long 시간)
       const longMA =
         prices.reduce((sum, price) => sum + price, 0) / prices.length;
 
