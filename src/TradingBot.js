@@ -653,7 +653,7 @@ class TradingBot {
       const markets = await this.dataProvider.getMarketsByVolume();
       const newWatchList = new Set();
 
-      for (const market of markets.slice(0, 100)) {
+      for (const market of markets.slice(0, 50)) {
         if (this.holdings[market]) continue; // 이미 보유 중인 종목 제외
 
         const volumeSignal = await this.getVolumeSignal(market);
