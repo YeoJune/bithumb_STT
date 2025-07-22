@@ -121,23 +121,10 @@ class BithumbAPI {
     return await this.publicApi("/v1/market/all", { isDetails });
   }
 
-  // 캔들 조회 (기본 1분 단위)
+  // 캔들 조회
   async getCandles(market, count = 1, to = null, unit = 1) {
     const params = { market, count };
     if (to) params.to = to;
-    return await this.publicApi(`/v1/candles/minutes/${unit}`, params);
-  }
-
-  // 최적화된 캔들 조회 (필요한 분 수에 따라 단위 자동 선택)
-  async getOptimizedCandles(market, requiredMinutes, to = null) {
-    // 지원되는 단위들 중 가장 큰 약수 찾기
-    const units = [240, 60, 30, 15, 10, 5, 3, 1];
-    const unit = units.find((u) => requiredMinutes % u === 0) || 1;
-    const count = Math.ceil(requiredMinutes / unit);
-
-    const params = { market, count };
-    if (to) params.to = to;
-
     return await this.publicApi(`/v1/candles/minutes/${unit}`, params);
   }
 

@@ -60,16 +60,6 @@ class BacktestDataProvider {
       .slice(0, count);
   }
 
-  // 최적화된 캔들 조회 (단위 자동 선택)
-  async getOptimizedCandles(market, requiredMinutes, to = null) {
-    // 지원되는 단위들 중 가장 큰 약수 찾기
-    const units = [240, 60, 30, 15, 10, 5, 3, 1];
-    const unit = units.find((u) => requiredMinutes % u === 0) || 1;
-    const count = Math.ceil(requiredMinutes / unit);
-
-    return await this.getCandles(market, count, to, unit);
-  }
-
   // 일봉 조회
   async getDayCandles(market, count = 1, to = null) {
     return await this.getCandles(market, count, to, 1440); // 1일 = 1440분

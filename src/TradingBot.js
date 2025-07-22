@@ -88,27 +88,40 @@ class TradingBot {
     return netSellAmount - totalBuyAmount;
   }
 
+  // 최적화된 캔들 단위 계산 (중복 제거)
+  getOptimalUnit(totalMinutes) {
+    const units = [240, 60, 30, 15, 10, 5, 3, 1];
+    const unit = units.find((u) => totalMinutes % u === 0) || 1;
+    return { unit, count: Math.ceil(totalMinutes / unit) };
+  }
+
   // 거래대금 급증 신호 분석
   async getVolumeSignal(market) {
     try {
       const totalMinutes = this.timeframes.short + this.timeframes.long;
-      const candles = await this.dataProvider.getOptimizedCandles(
+      const { unit, count } = this.getOptimalUnit(totalMinutes);
+      const candles = await this.dataProvider.getCandles(
         market,
-        totalMinutes
+        count,
+        null,
+        unit
       );
 
-      if (!candles || candles.length < totalMinutes) return null;
+      if (!candles || candles.length < count) return null;
 
       const getVolume = (candle) => parseFloat(candle.candle_acc_trade_price);
       const currentVolume = getVolume(candles[0]);
 
-      const shortCandles = candles.slice(1, this.timeframes.short + 1);
+      const shortCount = Math.ceil(this.timeframes.short / unit);
+      const longCount = Math.ceil(this.timeframes.long / unit);
+
+      const shortCandles = candles.slice(1, shortCount + 1);
       const shortAvg =
         shortCandles.reduce((sum, candle) => sum + getVolume(candle), 0) /
         shortCandles.length;
 
-      const longStart = this.timeframes.short + 1;
-      const longEnd = longStart + this.timeframes.long;
+      const longStart = shortCount + 1;
+      const longEnd = longStart + longCount;
       const longCandles = candles.slice(longStart, longEnd);
       const longAvg =
         longCandles.reduce((sum, candle) => sum + getVolume(candle), 0) /
@@ -131,23 +144,23 @@ class TradingBot {
   // 이동평균 계산
   async getMovingAverages(market) {
     try {
-      const totalMinutes = this.movingAverages.long; // 장기 이동평균만큼 데이터 필요
-      const candles = await this.dataProvider.getOptimizedCandles(
+      const totalMinutes = this.movingAverages.long;
+      const { unit, count } = this.getOptimalUnit(totalMinutes);
+      const candles = await this.dataProvider.getCandles(
         market,
-        totalMinutes
+        count,
+        null,
+        unit
       );
 
-      if (!candles || candles.length < totalMinutes) return null;
+      if (!candles || candles.length < count) return null;
 
       const prices = candles.map((candle) => parseFloat(candle.trade_price));
+      const shortCount = Math.ceil(this.movingAverages.short / unit);
 
-      // 단기 이동평균 (최근 N개)
       const shortMA =
-        prices
-          .slice(0, this.movingAverages.short)
-          .reduce((sum, price) => sum + price, 0) / this.movingAverages.short;
-
-      // 장기 이동평균 (전체 데이터)
+        prices.slice(0, shortCount).reduce((sum, price) => sum + price, 0) /
+        shortCount;
       const longMA =
         prices.reduce((sum, price) => sum + price, 0) / prices.length;
 
