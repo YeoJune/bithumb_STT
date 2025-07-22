@@ -31,9 +31,10 @@ class BithumbTradingBot {
       accessKey,
       secretKey,
       isLive: true,
+      api: config.api, // API 설정 전달
     });
 
-    this.executionEngine = new TradingEngine(this.api, true);
+    this.executionEngine = new TradingEngine(this.api, true, config);
 
     this.tradingBot = new TradingBot(
       config,
@@ -169,6 +170,30 @@ const config = {
     long: 180, // 장기 평균 180분
     shortThreshold: 1.5, // 현재 vs 단기 1.5배
     longThreshold: 1.5, // 단기 vs 장기 1.5배
+  },
+
+  // 수수료 설정
+  fees: {
+    buy: 0.0004, // 매수 수수료 0.04%
+    sell: 0.0004, // 매도 수수료 0.04%
+  },
+
+  // 거래 관련 설정
+  trading: {
+    minBuyAmount: 5000, // 최소 매수 금액
+    orderTimeoutMinutes: 2, // 주문 대기 시간 (분)
+    maxScanMarkets: 50, // 최대 스캔 종목 수
+  },
+
+  // 백테스트 설정
+  backtest: {
+    initialBalance: 1000000, // 백테스트 초기 자금
+  },
+
+  // API 설정
+  api: {
+    rateLimit: 100, // API 호출 제한 (횟수)
+    rateLimitInterval: 1000, // API 제한 간격 (밀리초)
   },
 };
 

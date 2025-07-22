@@ -9,8 +9,8 @@ class TradingBot {
     this.profitRatio = config.profitRatio || 0.05;
     this.lossRatio = config.lossRatio || 0.025;
     this.trailingStopRatio = config.trailingStopRatio || 0.01; // 고점 대비 1% 하락 시 매도
-    this.buyFeeRate = 0.0004; // 매수 수수료 0.04%
-    this.sellFeeRate = 0.0004; // 매도 수수료 0.04%
+    this.buyFeeRate = config.fees?.buy || 0.0004; // 매수 수수료
+    this.sellFeeRate = config.fees?.sell || 0.0004; // 매도 수수료
     this.timeframes = config.timeframes || {
       short: 15,
       long: 60,
@@ -24,6 +24,11 @@ class TradingBot {
       long: 30,
     };
     this.volumeFilterInterval = (config.volumeFilterInterval || 30) * 1000; // 초를 밀리초로 변환
+
+    // 거래 관련 설정
+    this.minBuyAmount = config.trading?.minBuyAmount || 5000;
+    this.orderTimeoutMinutes = config.trading?.orderTimeoutMinutes || 2;
+    this.maxScanMarkets = config.trading?.maxScanMarkets || 50;
 
     // 의존성 주입
     this.dataProvider = dataProvider;
@@ -202,7 +207,7 @@ class TradingBot {
 
   // 매수 주문
   async buy(market) {
-    if (this.buyAmount < 5000) return false;
+    if (this.buyAmount < this.minBuyAmount) return false;
 
     try {
       const [tickerResponse, orderbook] = await Promise.all([
@@ -438,13 +443,13 @@ class TradingBot {
               stats: this.stats,
             });
           } else if (orderStatus === "wait") {
-            // 미처리 매수 주문 체크 - 주문 생성 시간으로부터 2분 경과 시 취소
+            // 미처리 매수 주문 체크 - 주문 생성 시간으로부터 설정된 시간 경과 시 취소
             const orderAge = Date.now() - holding.buyTime;
-            const maxWaitTime = 2 * 60 * 1000; // 2분
+            const maxWaitTime = this.orderTimeoutMinutes * 60 * 1000; // 분을 밀리초로 변환
 
             if (orderAge > maxWaitTime) {
               this.logger.log(
-                `⏰ ${market} 매수 주문 2분 경과로 취소: ${holding.uuid}`
+                `⏰ ${market} 매수 주문 ${this.orderTimeoutMinutes}분 경과로 취소: ${holding.uuid}`
               );
 
               try {
@@ -653,7 +658,7 @@ class TradingBot {
       const markets = await this.dataProvider.getMarketsByVolume();
       const newWatchList = new Set();
 
-      for (const market of markets.slice(0, 50)) {
+      for (const market of markets.slice(0, this.maxScanMarkets)) {
         if (this.holdings[market]) continue; // 이미 보유 중인 종목 제외
 
         const volumeSignal = await this.getVolumeSignal(market);

@@ -14,7 +14,9 @@ class BithumbAPI {
     this.secretKey = config.secretKey;
     this.baseUrl = config.baseUrl || "https://api.bithumb.com";
 
-    // Rate limiting
+    // Rate limiting 설정
+    this.rateLimit = config.api?.rateLimit || 100;
+    this.rateLimitInterval = config.api?.rateLimitInterval || 1000;
     this.requestCount = 0;
     this.lastRequestTime = 0;
   }
@@ -42,13 +44,13 @@ class BithumbAPI {
   // 속도 제한
   async rateLimit() {
     const now = Date.now();
-    if (now - this.lastRequestTime > 1000) {
+    if (now - this.lastRequestTime > this.rateLimitInterval) {
       this.requestCount = 0;
       this.lastRequestTime = now;
     }
-    if (this.requestCount >= 100) {
+    if (this.requestCount >= this.rateLimit) {
       await new Promise((r) =>
-        setTimeout(r, 1000 - (now - this.lastRequestTime))
+        setTimeout(r, this.rateLimitInterval - (now - this.lastRequestTime))
       );
       this.requestCount = 0;
       this.lastRequestTime = Date.now();

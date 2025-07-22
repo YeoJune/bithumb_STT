@@ -3,15 +3,20 @@
  * 실거래/백테스트 모드에 따른 거래 실행
  */
 class TradingEngine {
-  constructor(api, isLive = true) {
+  constructor(api, isLive = true, config = {}) {
     this.api = api;
     this.isLive = isLive;
+    this.config = config;
 
     // 백테스트용 모의 상태
-    this.mockBalance = isLive ? 0 : 1000000; // 백테스트 시작 자금 100만원
+    this.mockBalance = isLive ? 0 : config.backtest?.initialBalance || 1000000;
     this.mockHoldings = {};
     this.mockOrders = {};
     this.orderCounter = 0;
+
+    // 수수료 설정
+    this.buyFeeRate = config.fees?.buy || 0.0004;
+    this.sellFeeRate = config.fees?.sell || 0.0004;
   }
 
   // 매수 주문
@@ -27,7 +32,7 @@ class TradingEngine {
     } else {
       // 백테스트 모의 매수
       const uuid = `mock_${++this.orderCounter}`;
-      const totalCost = price * volume * 1.0004; // 수수료 포함
+      const totalCost = price * volume * (1 + this.buyFeeRate); // 수수료 포함
 
       if (this.mockBalance < totalCost) {
         throw new Error("잔액 부족");
@@ -125,7 +130,7 @@ class TradingEngine {
       // 현재 시장가로 즉시 체결
       const ticker = await this.api.getTicker(market);
       const currentPrice = parseFloat(ticker.trade_price);
-      const totalReceived = currentPrice * volume * 0.9996; // 수수료 차감
+      const totalReceived = currentPrice * volume * (1 - this.sellFeeRate); // 수수료 차감
 
       this.mockBalance += totalReceived;
 
@@ -337,8 +342,9 @@ class TradingEngine {
   }
 
   // 백테스트 상태 초기화
-  resetBacktestState(initialBalance = 1000000) {
-    this.mockBalance = initialBalance;
+  resetBacktestState(initialBalance = null) {
+    this.mockBalance =
+      initialBalance || this.config.backtest?.initialBalance || 1000000;
     this.mockHoldings = {};
     this.mockOrders = {};
     this.orderCounter = 0;
