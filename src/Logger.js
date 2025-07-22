@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 
 /**
- * 로깅 시스템
+ * 개선된 로깅 시스템 - CLI 서버 최적화
  */
 class Logger {
   constructor(config = {}) {
@@ -10,6 +10,7 @@ class Logger {
     this.enableConsole = config.enableConsole !== false;
     this.enableFile = config.enableFile !== false;
     this.level = config.level || "info"; // debug, info, warn, error
+    this.colorEnabled = config.colorEnabled !== false;
 
     // 로그 디렉토리 생성
     const logDir = path.dirname(this.logFile);
@@ -23,6 +24,50 @@ class Logger {
       warn: 2,
       error: 3,
     };
+
+    // ANSI 색상 코드
+    this.colors = {
+      reset: "\x1b[0m",
+      dim: "\x1b[2m",
+      bright: "\x1b[1m",
+      red: "\x1b[31m",
+      green: "\x1b[32m",
+      yellow: "\x1b[33m",
+      blue: "\x1b[34m",
+      magenta: "\x1b[35m",
+      cyan: "\x1b[36m",
+      white: "\x1b[37m",
+      gray: "\x1b[90m",
+    };
+
+    // 로그 레벨별 색상 매핑
+    this.levelColors = {
+      debug: this.colors.gray,
+      info: this.colors.cyan,
+      warn: this.colors.yellow,
+      error: this.colors.red,
+    };
+  }
+
+  // 색상 적용 메서드
+  colorize(text, color) {
+    if (!this.colorEnabled) return text;
+    return `${color}${text}${this.colors.reset}`;
+  }
+
+  // KST 시간 문자열 생성 (더 읽기 쉬운 형식)
+  getKSTTimeString() {
+    const now = new Date();
+    const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+    return kst.toLocaleString("ko-KR", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
   }
 
   // 로그 파일명 생성 (KST 기준)
@@ -44,34 +89,36 @@ class Logger {
     return this.levels[level] >= this.levels[this.level];
   }
 
-  // 기본 로그 메서드
+  // 기본 로그 메서드 (개선된 포맷팅)
   log(message, level = "info") {
     if (!this.shouldLog(level)) return;
 
-    const now = new Date();
-    const kstTime = now.toLocaleTimeString("en-US", {
-      hour12: false,
-      timeZone: "Asia/Seoul",
-    });
+    const timestamp = this.getKSTTimeString();
+    const levelTag = level.toUpperCase().padEnd(5);
 
-    const logMessage = `[${kstTime}] ${message}`;
-
-    // 콘솔 출력
+    // 콘솔 출력 (색상 적용)
     if (this.enableConsole) {
+      const coloredLevel = this.colorize(
+        `[${levelTag}]`,
+        this.levelColors[level]
+      );
+      const coloredTime = this.colorize(timestamp, this.colors.gray);
+      const consoleMessage = `${coloredTime} ${coloredLevel} ${message}`;
+
       if (level === "error") {
-        console.error(logMessage);
+        console.error(consoleMessage);
       } else if (level === "warn") {
-        console.warn(logMessage);
+        console.warn(consoleMessage);
       } else {
-        console.log(logMessage);
+        console.log(consoleMessage);
       }
     }
 
-    // 파일 출력
+    // 파일 출력 (색상 코드 제거)
     if (this.enableFile) {
       try {
-        const timestamp = this.toKSTISOString(now);
-        const fileMessage = `${timestamp} [${level.toUpperCase()}] ${message}\n`;
+        const isoTimestamp = this.toKSTISOString();
+        const fileMessage = `${isoTimestamp} [${levelTag}] ${message}\n`;
         fs.appendFileSync(this.logFile, fileMessage);
       } catch (error) {
         console.error(`⚠️ 로그 파일 저장 실패: ${error.message}`);

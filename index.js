@@ -7,8 +7,9 @@ const TradingEngine = require("./src/TradingEngine");
 const DataManager = require("./src/DataManager");
 const Logger = require("./src/Logger");
 const CLIInterface = require("./src/interfaces/CLIInterface");
+const WebInterface = require("./web/server");
 
-// 레거시 래퍼 클래스 (기존 인터페이스 호환성 유지)
+// 통합 래퍼 클래스
 class BithumbTradingBot {
   constructor(config = {}) {
     // 환경 변수 확인
@@ -22,8 +23,16 @@ class BithumbTradingBot {
       process.exit(1);
     }
 
+    // 설정 저장
+    this.config = config;
+    this.refreshInterval = config.refreshInterval || 5;
+
     // 모듈 초기화
-    this.logger = new Logger();
+    this.logger = new Logger({
+      enableConsole: true,
+      enableFile: true,
+      colorEnabled: true,
+    });
 
     this.dataManager = new DataManager();
 
@@ -31,7 +40,7 @@ class BithumbTradingBot {
       accessKey,
       secretKey,
       isLive: true,
-      api: config.api, // API 설정 전달
+      api: config.api,
     });
 
     this.executionEngine = new TradingEngine(this.api, true, config);
@@ -46,6 +55,11 @@ class BithumbTradingBot {
 
     this.cliInterface = new CLIInterface(this.tradingBot, this.logger);
 
+    // 웹 인터페이스 초기화 (봇과 연결)
+    this.webInterface = new WebInterface(this.tradingBot, {
+      port: config.webPort || 3000,
+    });
+
     // 안전한 종료 처리
     this.setupSignalHandlers();
   }
@@ -54,43 +68,51 @@ class BithumbTradingBot {
   setupSignalHandlers() {
     process.on("SIGINT", () => {
       console.log("\n🔄 프로그램을 안전하게 종료합니다...");
-      this.logger.log("💾 프로그램 종료 - 데이터 저장됨");
+      this.logger.system("프로그램 종료 - 데이터 저장됨");
       process.exit(0);
     });
 
     process.on("SIGTERM", () => {
       console.log("\n🔄 시스템 종료 신호 수신...");
-      this.logger.log("💾 시스템 종료 - 데이터 저장됨");
+      this.logger.system("시스템 종료 - 데이터 저장됨");
       process.exit(0);
     });
 
     process.on("uncaughtException", (error) => {
       console.log(`💥 예상치 못한 오류: ${error.message}`);
-      this.logger.log(`💥 예상치 못한 오류: ${error.message}`);
+      this.logger.errorWithStack(error, "예상치 못한 오류");
       process.exit(1);
     });
 
     process.on("unhandledRejection", (reason, promise) => {
       console.log(`🚫 처리되지 않은 Promise 거부:`, reason);
-      this.logger.log(`🚫 처리되지 않은 Promise 거부: ${reason}`);
+      this.logger.error(`처리되지 않은 Promise 거부: ${reason}`);
     });
   }
 
   // 메인 실행 메서드
   async run() {
     try {
-      this.logger.log(
+      this.logger.info(
         `🚀 빗썸 트레이딩 봇 시작 (매수: ${this.tradingBot.buyAmount.toLocaleString()}원)`
       );
-      this.logger.log(
+      this.logger.info(
         `📊 설정: 손절 ${(this.tradingBot.lossRatio * 100).toFixed(1)}%, MA ${
           this.tradingBot.movingAverages.short
         }분/${this.tradingBot.movingAverages.long}분`
       );
 
       if (Object.keys(this.tradingBot.holdings).length > 0) {
-        this.logger.log("🔄 기존 보유 종목 모니터링 재개");
+        this.logger.info("🔄 기존 보유 종목 모니터링 재개");
       }
+
+      // 웹 인터페이스 시작
+      this.webInterface.start();
+      this.logger.system(
+        `웹 대시보드가 http://localhost:${
+          this.config.webPort || 3000
+        } 에서 시작됨`
+      );
 
       // 지갑과 bot_data 완전 동기화
       await this.tradingBot.synchronizeState();
@@ -117,14 +139,14 @@ class BithumbTradingBot {
         }
       }
     } catch (error) {
-      this.logger.log(`💥 봇 실행 실패: ${error.message}`);
+      this.logger.errorWithStack(error, "봇 실행 실패");
       throw error;
     }
   }
 
   // 레거시 메서드들 (기존 코드와의 호환성 유지)
   log(message) {
-    this.logger.log(message);
+    this.logger.info(message);
   }
 
   async synchronizeState() {
@@ -156,6 +178,7 @@ const config = {
   buyAmount: 10000, // 1만원씩 매수
   profitRatio: 0.03, // 3% 익절 (사용 안함)
   lossRatio: 0.015, // 1.5% 손절
+  webPort: 80, // 웹 인터페이스 포트
 
   // 이동평균 설정 (분 단위)
   movingAverages: {
