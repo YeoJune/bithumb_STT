@@ -212,6 +212,15 @@ header h1 {
   font-size: 0.9rem;
 }
 
+.watchlist-ratios {
+  font-size: 0.8rem;
+  color: #f6ad55;
+  font-weight: bold;
+  background: rgba(246, 173, 85, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
 .holding-market {
   font-weight: bold;
   color: #2d3748;

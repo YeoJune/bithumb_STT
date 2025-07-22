@@ -38,7 +38,7 @@ class TradingBot {
 
     // 상태
     this.holdings = {};
-    this.watchList = new Set(); // 거래대금 필터 통과한 종목들
+    this.watchList = new Map(); // 거래대금 필터 통과한 종목들 (market -> {shortRatio, longRatio})
     this.lastVolumeCheck = 0; // 마지막 볼륨 체크 시간
     this.stats = {
       trades: 0,
@@ -679,14 +679,17 @@ class TradingBot {
     try {
       this.stats.currentScan = "Volume filtering...";
       const markets = await this.dataProvider.getMarketsByVolume();
-      const newWatchList = new Set();
+      const newWatchList = new Map();
 
       for (const market of markets.slice(0, this.maxScanMarkets)) {
         if (this.holdings[market]) continue; // 이미 보유 중인 종목 제외
 
         const volumeSignal = await this.getVolumeSignal(market);
         if (volumeSignal && volumeSignal.signal) {
-          newWatchList.add(market);
+          newWatchList.set(market, {
+            shortRatio: volumeSignal.shortRatio,
+            longRatio: volumeSignal.longRatio,
+          });
         }
       }
 
@@ -695,7 +698,9 @@ class TradingBot {
 
       if (this.watchList.size > 0) {
         this.logger.log(
-          `👀 감시 대상 업데이트: ${Array.from(this.watchList).join(", ")}`
+          `👀 감시 대상 업데이트: ${Array.from(this.watchList.keys()).join(
+            ", "
+          )}`
         );
       }
     } catch (error) {
@@ -713,7 +718,7 @@ class TradingBot {
       return;
     }
 
-    for (const market of this.watchList) {
+    for (const [market, ratios] of this.watchList) {
       if (this.holdings[market]) {
         this.watchList.delete(market); // 이미 매수한 종목은 감시에서 제거
         continue;

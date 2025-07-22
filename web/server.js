@@ -148,7 +148,13 @@ class WebInterface {
 
       try {
         const watchListArray = this.tradingBot.watchList
-          ? Array.from(this.tradingBot.watchList)
+          ? Array.from(this.tradingBot.watchList.entries()).map(
+              ([market, ratios]) => ({
+                market,
+                shortRatio: ratios.shortRatio,
+                longRatio: ratios.longRatio,
+              })
+            )
           : [];
         res.json({
           watchList: watchListArray,

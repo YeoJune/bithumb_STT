@@ -177,11 +177,15 @@ class Dashboard {
       }
 
       let html = "";
-      watchList.forEach((market) => {
+      watchList.forEach((item) => {
+        const market = typeof item === "string" ? item : item.market;
+        const shortRatio = item.shortRatio ? `${item.shortRatio}x` : "-";
+        const longRatio = item.longRatio ? `${item.longRatio}x` : "-";
+
         html += `
                     <div class="watchlist-item">
                         <div class="watchlist-market">${market}</div>
-                        <div class="watchlist-status">🔍 모니터링</div>
+                        <div class="watchlist-ratios">${shortRatio}/${longRatio}</div>
                     </div>
                 `;
       });
